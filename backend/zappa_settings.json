@@ -1,0 +1,57 @@
+{
+  "dev": {
+    "app_function": "app.app",
+    "aws_region": "us-east-1",
+    "project_name": "zillacode-backend",
+    "runtime": "python3.9",
+    "s3_bucket": "<DEV_BACKEND_BUCKET_HERE>",
+    "cors": true,
+    "keep_warm_expression": "rate(30 minutes)",
+    "aws_environment_variables": {
+      "FLASK_DEBUG": "1",
+      "FLASK_ENV": "dev"
+    },
+    "memory_size": 2048,
+    "tags": {
+      "created_using": "zappa",
+      "env": "dev",
+      "Name": "Dev Backend"
+    },
+    "extra_permissions": [
+      {
+        "Effect": "Allow",
+        "Action": ["lambda:InvokeFunction"],
+        "Resource": "*"
+      }
+    ],
+    "timeout_seconds": 60,
+    "slim_handler": true
+  },
+  "prod": {
+    "app_function": "app.app",
+    "aws_region": "us-east-1",
+    "project_name": "zillacode-backend",
+    "runtime": "python3.9",
+    "s3_bucket": "<PROD_BACKEND_BUCKET_HERE>",
+    "cors": true,
+    "keep_warm_expression": "rate(3 minutes)",
+    "aws_environment_variables": {
+      "FLASK_ENV": "prod"
+    },
+    "memory_size": 2048,
+    "tags": {
+      "created_using": "zappa",
+      "env": "prod",
+      "Name": "Prod Backend"
+    },
+    "extra_permissions": [
+      {
+        "Effect": "Allow",
+        "Action": ["lambda:InvokeFunction"],
+        "Resource": "*"
+      }
+    ],
+    "timeout_seconds": 60,
+    "slim_handler": true
+  }
+}

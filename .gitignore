@@ -1,0 +1,54 @@
+node_modules
+
+.terraform
+.terraform*
+terraform*
+
+dist
+frontend/package-lock.json
+
+*.zip
+
+.pytest*
+
+.env
+
+.mypy_cache
+
+# dependencies
+frontend/node_modules
+frontend/.pnp
+frontend/.pnp.js
+
+# testing
+frontend/coverage
+
+# next.js
+frontend/.next/
+frontend/out/
+
+# production
+frontend/build
+
+# misc
+frontend/.DS_Store
+frontend/*.pem
+
+# debug
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.pnpm-debug.log*
+
+# local env files
+frontend/.env*.local
+
+# vercel
+frontend/.vercel
+
+# cypress
+frontend/cypress/videos/*
+
+yarn-error.log
+
+.DS_Store

@@ -1,0 +1,69 @@
+services:
+  backend:
+    image: zillacode-backend
+    ports:
+      - 5000:5000
+    build: ./backend
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    networks:
+      - spark-net
+      - scala-spark-net
+      - db-lambda-net
+    environment:
+      - FLASK_DEBUG=1
+      - TESTING=1
+      - FLASK_ENV=local
+  frontend:
+    image: zillacode-frontend
+    ports:
+      - 5173:5173
+    build: ./frontend
+    networks:
+      - spark-net
+      - scala-spark-net
+      - db-lambda-net
+  spark:
+    image: spark-lambda:latest
+    ports:
+      - 8081:8080
+    build: ./spark-lambda
+    networks:
+      spark-net:
+        ipv4_address: 10.5.0.6
+  scala-spark:
+    image: scala-spark-lambda:latest
+    ports:
+      - 8082:8080
+    build: ./scala-spark-lambda
+    networks:
+      scala-spark-net:
+        ipv4_address: 10.4.0.6
+  db-lambda:
+    image: db-lambda:latest
+    ports:
+      - 8083:8080
+    build: ./db-lambda
+    networks:
+      db-lambda-net:
+        ipv4_address: 10.8.0.6
+
+networks:
+  spark-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.5.0.0/16
+          gateway: 10.5.0.1
+  scala-spark-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.4.0.0/16
+          gateway: 10.4.0.1
+  db-lambda-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.8.0.0/16
+          gateway: 10.8.0.1

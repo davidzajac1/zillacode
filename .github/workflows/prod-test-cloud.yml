@@ -1,0 +1,23 @@
+name: Prod Test Cloud Frontend
+
+on:
+  pull_request:
+    branches: never
+
+env:
+  CYPRESS_BASE_URL: "<DEV_URL_HERE>"
+
+jobs:
+  test:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Branch
+        uses: actions/checkout@v2.5.0
+      - name: Run Cypress Tests on Dev Frontend in Cloud
+        uses: cypress-io/github-action@v4.2.1
+        with:
+          browser: chrome
+          runTests: true
+          record: false
+          working-directory: frontend

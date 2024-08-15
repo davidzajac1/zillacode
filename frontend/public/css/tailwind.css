@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* For react-split */
+.split {
+  flex-direction: row;
+}
+
+.gutter {
+  background-repeat: no-repeat;
+  background-position: 50%;
+}
+
+.gutter.gutter-horizontal {
+  background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjpo5aiZeMwF+yNnOs5KSvgAAAABJRU5ErkJggg==");
+  cursor: col-resize;
+  border-right: 1px solid rgb(226 232 240);
+  border-left: 1px solid rgb(226 232 240);
+}
+
+.gutter.gutter-vertical {
+  background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAB4AAAAFAQMAAABo7865AAAABlBMVEVHcEzMzMzyAv2sAAAAAXRSTlMAQObYZgAAABBJREFUeF5jOAMEEAIEEFwAn3kMwcB6I2AAAAAASUVORK5CYII=");
+  cursor: row-resize;
+  border-top: 1px solid rgb(226 232 240);
+}
+/* For react-split */
+
+/* Custom Scrollbar for entire site */
+::-webkit-scrollbar {
+  width: 0.5em;
+  height: 0.5em;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(241 245 249);
+  border: 0.1em solid rgb(241 245 249);
+  border-radius: 2em;
+}
+
+::-webkit-scrollbar-track {
+  background: rgb(203 213 225);
+  border-radius: 2em;
+  margin-block: 0.5em;
+}
+/* Custom Scrollbar for entire site */

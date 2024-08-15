@@ -1,0 +1,38 @@
+name: Dev Lint Test
+
+on:
+  pull_request:
+    branches: never
+
+env:
+  CYPRESS_BASE_URL: http://localhost:5173
+
+jobs:
+  lint:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Branch
+        uses: actions/checkout@v2.5.0
+      - name: Run Pre-Commit on all files
+        uses: pre-commit/action@v3.0.0
+        with:
+          extra_args: --all-files
+  test:
+    needs: lint
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Branch
+        uses: actions/checkout@v2.5.0
+      - name: Docker Compose Up All Containers except Database
+        run: docker-compose up -d backend spark frontend
+      - name: Run PyTests on Backend
+        run: make test-backend
+      - name: Run Cypress Tests on Frontend
+        uses: cypress-io/github-action@v4.2.1
+        with:
+          browser: chrome
+          runTests: true
+          record: false
+          working-directory: frontend

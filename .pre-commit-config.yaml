@@ -1,0 +1,37 @@
+repos:
+  - repo: https://github.com/ambv/black
+    rev: 24.8.0
+    hooks:
+      - id: black
+        exclude: spark-lambda/Dockerfile
+        args:
+          - --line-length=170
+        additional_dependencies: ["click==8.0.4"]
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        exclude: |
+          (?x)^(
+              spark-lambda/Dockerfile|
+              backend/Pipfile.lock|
+              frontend/yarn.lock|
+              frontend/index.html
+          )$
+
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.17.0
+    hooks:
+      - id: pyupgrade
+        args:
+          - --py36-plus
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: detect-aws-credentials
+        args:
+          - --allow-missing-credentials
+      - id: detect-private-key
+      - id: check-merge-conflict

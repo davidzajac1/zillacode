@@ -1,0 +1,41 @@
+name: Prod Deploy Frontend
+
+on:
+  push:
+    branches: never
+    paths: ["frontend/**", ".github/workflows/prod-deploy-frontend.yml"]
+
+env:
+  VITE_PUBLIC_API_BASE: ${{ secrets.PROD_API_BASE }}
+  BUCKET: "<PROD_FRONTEND_BUCKET_HERE>"
+
+jobs:
+  deploy:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/infra
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Checkout Branch
+        uses: actions/checkout@v2.5.0
+      - uses: hashicorp/setup-terraform@v2
+      - name: Initialize Terraform
+        run: terraform init -backend-config="key=frontend-prod"
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -var 'ENV=prod'
+      - name: Run Yarn Install
+        run: yarn install
+        working-directory: frontend
+      - name: Run Yarn Build
+        run: yarn build
+        working-directory: frontend
+      - name: Upload Distribution
+        run: aws s3 sync . ${BUCKET} --delete
+        working-directory: frontend/dist

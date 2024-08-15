@@ -1,0 +1,26 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+zappa = "*"
+flask = "*"
+flask-cors = "*"
+boto3 = "*"
+requests = "*"
+waitress = "*"
+pandas = "*"
+mysql-connector-python = "*"
+SQLAlchemy = "==1.4.49"
+tabulate = "*"
+snowflake-sqlalchemy = "==1.4.7"
+Jinja2 = "*"
+
+[dev-packages]
+pytest = "*"
+pytest-flask = "*"
+python-dotenv = "*"
+
+[requires]
+python_version = "3.9"

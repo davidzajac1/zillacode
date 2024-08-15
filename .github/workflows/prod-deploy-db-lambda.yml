@@ -1,0 +1,28 @@
+name: Prod Deploy DB Lambda
+
+on:
+  push:
+    branches: never
+    paths: ["db-lambda/**", ".github/workflows/prod-deploy-db-lambda.yml"]
+
+jobs:
+  deploy:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: db-lambda/infra
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Checkout Branch
+        uses: actions/checkout@v2.5.0
+      - uses: hashicorp/setup-terraform@v2
+      - name: Initialize Terraform
+        run: terraform init -backend-config="key=db-lambda-prod"
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -var 'ENV=prod'

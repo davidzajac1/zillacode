@@ -1,0 +1,57 @@
+name: Dev Deploy Backend
+
+on:
+  push:
+    branches: never
+    paths: ["backend/**", ".github/workflows/dev-deploy-backend.yml"]
+
+jobs:
+  deploy:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Checkout Branch
+        uses: actions/checkout@v2.5.0
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+      - name: Add SNOWFLAKE_USERNAME Environment Variable to Zappa Config
+        uses: jossef/action-set-json-field@v2.1
+        with:
+          file: ./backend/zappa_settings.json
+          field: dev.aws_environment_variables.SNOWFLAKE_USERNAME
+          value: ${{ secrets.DEV_SNOWFLAKE_USERNAME }}
+      - name: Add SNOWFLAKE_PASSWORD Environment Variable to Zappa Config
+        uses: jossef/action-set-json-field@v2.1
+        with:
+          file: ./backend/zappa_settings.json
+          field: dev.aws_environment_variables.SNOWFLAKE_PASSWORD
+          value: ${{ secrets.DEV_SNOWFLAKE_PASSWORD }}
+      - name: Add SNOWFLAKE_ACCOUNT Environment Variable to Zappa Config
+        uses: jossef/action-set-json-field@v2.1
+        with:
+          file: ./backend/zappa_settings.json
+          field: dev.aws_environment_variables.SNOWFLAKE_ACCOUNT
+          value: ${{ secrets.DEV_SNOWFLAKE_ACCOUNT }}
+      - name: Add SNOWFLAKE_WAREHOUSE Environment Variable to Zappa Config
+        uses: jossef/action-set-json-field@v2.1
+        with:
+          file: ./backend/zappa_settings.json
+          field: dev.aws_environment_variables.SNOWFLAKE_WAREHOUSE
+          value: ${{ secrets.DEV_SNOWFLAKE_WAREHOUSE }}
+      - name: Install pipenv
+        run: pip install pipenv
+      - name: Install Pipenv dependencies
+        run: pipenv install -d
+      - name: Run Zappa Update
+        run: pipenv run zappa update dev
