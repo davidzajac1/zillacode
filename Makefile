@@ -5,7 +5,7 @@ help:
 	@exit 0
 
 up:
-	docker-compose up
+	docker-compose -f docker-compose.dev.yaml up
 
 lint:
 	pre-commit install & pre-commit run --all-files
@@ -14,16 +14,16 @@ add:
 	( cd frontend && yarn add ${package} )
 
 up-backend:
-	docker-compose up -d backend spark scala-spark db-lambda
+	docker-compose -f docker-compose.dev.yaml up -d backend spark scala-spark db-lambda
 
 serve-frontend:
 	( cd frontend && yarn install && yarn test )
 
 down:
-	docker-compose down
+	docker-compose -f docker-compose.dev.yaml down
 
 rebuild:
-	docker-compose up -d --no-deps --build ${container}
+	docker-compose -f docker-compose.dev.yaml up -d --no-deps --build ${container}
 
 test-frontend:
 	( cd frontend && yarn cypress run )
