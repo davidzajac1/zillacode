@@ -16,7 +16,7 @@ on:
 jobs:
   spark:
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: spark-lambda
@@ -39,7 +39,7 @@ jobs:
         run: docker manifest push davidzajac1/zillacode-spark:latest
   scala-spark:
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: scala-spark-lambda
@@ -62,7 +62,7 @@ jobs:
         run: docker manifest push davidzajac1/zillacode-scala-spark:latest
   db-service:
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: db-lambda
@@ -85,7 +85,7 @@ jobs:
         run: docker manifest push davidzajac1/zillacode-db-service:latest
   backend:
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: backend
@@ -108,7 +108,7 @@ jobs:
         run: docker manifest push davidzajac1/zillacode-backend:latest
   frontend:
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: frontend
