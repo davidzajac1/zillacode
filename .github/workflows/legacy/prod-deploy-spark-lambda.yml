@@ -3,7 +3,11 @@ name: Prod Deploy Spark Lambda
 on:
   push:
     branches: never
-    paths: ["spark-lambda/**", ".github/workflows/prod-deploy-spark-lambda.yml"]
+    paths:
+      [
+        "spark-lambda/**",
+        ".github/workflows/legacy/prod-deploy-spark-lambda.yml",
+      ]
 
 jobs:
   deploy:
