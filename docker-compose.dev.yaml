@@ -1,8 +1,8 @@
 services:
   backend:
-    image: davidzajac1/zillacode-backend:latest
     ports:
       - 5000:5000
+    build: ./backend
     extra_hosts:
       - host.docker.internal:host-gateway
     networks:
@@ -14,31 +14,31 @@ services:
       - TESTING=1
       - FLASK_ENV=local
   frontend:
-    image: davidzajac1/zillacode-frontend:latest
     ports:
       - 5173:5173
+    build: ./frontend
     networks:
       - spark-net
       - scala-spark-net
       - db-lambda-net
   spark:
-    image: davidzajac1/zillacode-spark:latest
     ports:
       - 8081:8080
+    build: ./spark-lambda
     networks:
       spark-net:
         ipv4_address: 10.5.0.6
   scala-spark:
-    image: davidzajac1/zillacode-scala-spark:latest
     ports:
       - 8082:8080
+    build: ./scala-spark-lambda
     networks:
       scala-spark-net:
         ipv4_address: 10.4.0.6
   db-lambda:
-    image: davidzajac1/zillacode-db-service:latest
     ports:
       - 8083:8080
+    build: ./db-lambda
     networks:
       db-lambda-net:
         ipv4_address: 10.8.0.6
