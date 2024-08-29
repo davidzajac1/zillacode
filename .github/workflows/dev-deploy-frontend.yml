@@ -1,9 +1,13 @@
-name: Dev Deploy DB Lambda
+name: Dev Deploy Frontend
 
 on:
   push:
     branches: never
-    paths: ["db-lambda/**", ".github/workflows/legacy/dev-deploy-db-lambda.yml"]
+    paths: ["frontend/**", ".github/workflows/dev-deploy-frontend.yml"]
+
+env:
+  VITE_PUBLIC_API_BASE: ${{ secrets.DEV_API_BASE }}
+  BUCKET: "<DEV_FRONTEND_BUCKET_HERE>"
 
 jobs:
   deploy:
@@ -11,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: db-lambda/infra
+        working-directory: frontend/infra
     steps:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -23,6 +27,15 @@ jobs:
         uses: actions/checkout@v2.5.0
       - uses: hashicorp/setup-terraform@v2
       - name: Initialize Terraform
-        run: terraform init -backend-config="key=db-lambda-dev"
+        run: terraform init -backend-config="key=frontend-dev"
       - name: Terraform Apply
         run: terraform apply -auto-approve -var 'ENV=dev'
+      - name: Run Yarn Install
+        run: yarn install
+        working-directory: frontend
+      - name: Run Yarn Build
+        run: yarn build
+        working-directory: frontend
+      - name: Upload Distribution
+        run: aws s3 sync . ${BUCKET} --delete
+        working-directory: frontend/dist

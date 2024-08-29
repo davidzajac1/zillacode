@@ -31,6 +31,53 @@ test-frontend:
 test-backend:
 	docker exec zillacode-backend-1 python -m pytest
 
+push-images:
+	@echo "Building and pushing backend to Docker Hub"
+	docker build --platform linux/arm64 -t davidzajac1/zillacode-backend:arm64 .
+	docker push davidzajac1/zillacode-backend:arm64
+	docker build --platform linux/amd64 -t davidzajac1/zillacode-backend:amd64 .
+	docker push davidzajac1/zillacode-backend:amd64
+	docker manifest create davidzajac1/zillacode-backend:latest \
+		--amend davidzajac1/zillacode-backend:amd64 \
+		--amend davidzajac1/zillacode-backend:arm64
+	docker manifest push davidzajac1/zillacode-backend:latest
+	@echo "Building and pushing backend to Docker Hub"
+	docker build --platform linux/arm64 -t davidzajac1/zillacode-db-service:arm64 .
+	docker push davidzajac1/zillacode-db-service:arm64
+	docker build --platform linux/amd64 -t davidzajac1/zillacode-db-service:amd64 .
+	docker push davidzajac1/zillacode-db-service:amd64
+	docker manifest create davidzajac1/zillacode-db-service:latest \
+		--amend davidzajac1/zillacode-db-service:amd64 \
+		--amend davidzajac1/zillacode-db-service:arm64
+	docker manifest push davidzajac1/zillacode-db-service:latest
+	@echo "Building and pushing backend to Docker Hub"
+	docker build --platform linux/arm64 -t davidzajac1/zillacode-frontend:arm64 .
+	docker push davidzajac1/zillacode-frontend:arm64
+	docker build --platform linux/amd64 -t davidzajac1/zillacode-frontend:amd64 .
+	docker push davidzajac1/zillacode-frontend:amd64
+	docker manifest create davidzajac1/zillacode-frontend:latest \
+		--amend davidzajac1/zillacode-frontend:amd64 \
+		--amend davidzajac1/zillacode-frontend:arm64
+	docker manifest push davidzajac1/zillacode-frontend:latest
+	@echo "Building and pushing backend to Docker Hub"
+	docker build --platform linux/arm64 -t davidzajac1/zillacode-scala-spark:arm64 .
+	docker push davidzajac1/zillacode-scala-spark:arm64
+	docker build --platform linux/amd64 -t davidzajac1/zillacode-scala-spark:amd64 .
+	docker push davidzajac1/zillacode-scala-spark:amd64
+	docker manifest create davidzajac1/zillacode-scala-spark:latest \
+		--amend davidzajac1/zillacode-scala-spark:amd64 \
+		--amend davidzajac1/zillacode-scala-spark:arm64
+	docker manifest push davidzajac1/zillacode-scala-spark:latest
+	@echo "Building and pushing backend to Docker Hub"
+	docker build --platform linux/arm64 -t davidzajac1/zillacode-spark:arm64 .
+	docker push davidzajac1/zillacode-spark:arm64
+	docker build --platform linux/amd64 -t davidzajac1/zillacode-spark:amd64 .
+	docker push davidzajac1/zillacode-spark:amd64
+	docker manifest create davidzajac1/zillacode-spark:latest \
+		--amend davidzajac1/zillacode-spark:amd64 \
+		--amend davidzajac1/zillacode-spark:arm64
+	docker manifest push davidzajac1/zillacode-spark:latest
+
 
 define HELP_MESSAGE
 Usage: $ make [TARGETS]
@@ -46,5 +93,6 @@ TARGETS
 	rebuild                 	Rebuilds a specific container (backend, frontend, spark, database), requires a container variable ex. make rebuild container=backend
 	test-frontend           	Spins up Cypress UI to run frontend tests
 	test-backend            	Runs PyTests on backend within the backend container
+	push-images             	Pushes the images to the Docker Hub (needs Auth only used by admins)
 
 endef

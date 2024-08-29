@@ -1,10 +1,9 @@
-name: Prod Deploy DB Lambda
+name: Dev Deploy Spark Lambda
 
 on:
   push:
     branches: never
-    paths:
-      ["db-lambda/**", ".github/workflows/legacy/prod-deploy-db-lambda.yml"]
+    paths: ["spark-lambda/**", ".github/workflows/dev-deploy-spark-lambda.yml"]
 
 jobs:
   deploy:
@@ -12,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: db-lambda/infra
+        working-directory: spark-lambda/infra
     steps:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -24,6 +23,6 @@ jobs:
         uses: actions/checkout@v2.5.0
       - uses: hashicorp/setup-terraform@v2
       - name: Initialize Terraform
-        run: terraform init -backend-config="key=db-lambda-prod"
+        run: terraform init -backend-config="key=spark-lambda-dev"
       - name: Terraform Apply
-        run: terraform apply -auto-approve -var 'ENV=prod'
+        run: terraform apply -auto-approve -var 'ENV=dev'
