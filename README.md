@@ -34,7 +34,7 @@ SNOWFLAKE_ACCOUNT=<SNOWFLAKE_ACCOUNT>
 SNOWFLAKE_WAREHOUSE=<SNOWFLAKE_WAREHOUSE>
 ```
 
-You can set up your own Snowflake account, all queries ran by Zillacode will not result in any spend as they all just compile as Common Table Expressions without querying any tables. Your Snowflake user must have permissions to use your Snowflake warehouse.
+You can set up your own Snowflake account, all queries run by Zillacode will not result in any spend as they all just compile as Common Table Expressions without querying any tables. Your Snowflake user must have permissions to use your Snowflake warehouse.
 
 ### Questions/Issues
 
