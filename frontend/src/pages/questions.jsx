@@ -1,3 +1,4 @@
+import React, { useState } from "react";
 import { Typography } from "@material-tailwind/react";
 import { Footer } from "@/widgets/layout";
 import { LockClosedIcon } from "@heroicons/react/24/outline";
@@ -413,6 +414,35 @@ const rows = [
 
 export function Questions() {
   const navigate = useNavigate();
+  const [sortBy, setSortBy] = useState("number");
+  const [sortOrder, setSortOrder] = useState("asc"); // "asc" | "desc"
+
+  const difficultyOrder = ["Easy", "Medium", "Hard"];
+
+  const handleSort = (column) => {
+    if (sortBy === column) {
+      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(column);
+      setSortOrder("asc");
+    }
+  };
+
+  const sortedRows = [...rows].sort((a, b) => {
+    let comparison = 0;
+    
+    if (sortBy === "difficulty") {
+      comparison = difficultyOrder.indexOf(a.difficulty) - difficultyOrder.indexOf(b.difficulty);
+    } else if (sortBy === "title") {
+      comparison = a.title.localeCompare(b.title);
+    } else if (sortBy === "industry") {
+      comparison = a.industry.localeCompare(b.industry);
+    } else {
+      comparison = a.number - b.number;
+    }
+    
+    return sortOrder === "desc" ? -comparison : comparison;
+  });
 
   return (
     <>
@@ -432,19 +462,72 @@ export function Questions() {
       <section className="relative bg-blue-gray-50/50 px-4 py-16">
         <div className="container mx-auto">
           <div className="relative -mt-64 mb-6 flex w-full min-w-0 flex-col break-words rounded-3xl bg-white shadow-xl shadow-gray-500/5">
+
+
             <TableContainer component={Paper} sx={{ borderRadius: 5 }}>
               <Table sx={{ minWidth: 650 }} aria-label="simple table">
                 <TableHead sx={{ bgcolor: "grey.400" }}>
-                  <TableRow className="cursor-default">
-                    <TableCell>Number</TableCell>
-                    <TableCell align="left">Title</TableCell>
-                    <TableCell align="right">Industry</TableCell>
+                  <TableRow>
+                    <TableCell 
+                      className="cursor-pointer hover:bg-gray-500 transition-colors"
+                      onClick={() => handleSort("number")}
+                    >
+                      <div className="flex items-center">
+                        Number
+                        {sortBy === "number" && (
+                          <span className="ml-1">
+                            {sortOrder === "asc" ? "↑" : "↓"}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell 
+                      align="left"
+                      className="cursor-pointer hover:bg-gray-500 transition-colors"
+                      onClick={() => handleSort("title")}
+                    >
+                      <div className="flex items-center">
+                        Title
+                        {sortBy === "title" && (
+                          <span className="ml-1">
+                            {sortOrder === "asc" ? "↑" : "↓"}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell 
+                      align="right"
+                      className="cursor-pointer hover:bg-gray-500 transition-colors"
+                      onClick={() => handleSort("industry")}
+                    >
+                      <div className="flex items-center justify-end">
+                        Industry
+                        {sortBy === "industry" && (
+                          <span className="ml-1">
+                            {sortOrder === "asc" ? "↑" : "↓"}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell align="right">Topics</TableCell>
-                    <TableCell align="right">Difficulty</TableCell>
+                    <TableCell 
+                      align="right"
+                      className="cursor-pointer hover:bg-gray-500 transition-colors"
+                      onClick={() => handleSort("difficulty")}
+                    >
+                      <div className="flex items-center justify-end">
+                        Difficulty
+                        {sortBy === "difficulty" && (
+                          <span className="ml-1">
+                            {sortOrder === "asc" ? "↑" : "↓"}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {rows.map((row, i) => (
+                  {sortedRows.map((row, i) => (
                     <TableRow
                       key={row.number}
                       className="cursor-pointer"
