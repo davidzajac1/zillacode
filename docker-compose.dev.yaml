@@ -9,10 +9,13 @@ services:
       - spark-net
       - scala-spark-net
       - db-lambda-net
+    volumes:
+      - backend-data:/app/data
     environment:
       - FLASK_DEBUG=1
       - TESTING=1
       - FLASK_ENV=local
+      - COMPLETIONS_DB_PATH=/app/data/completions.db
   frontend:
     ports:
       - 5173:5173
@@ -62,3 +65,6 @@ networks:
       config:
         - subnet: 10.8.0.0/16
           gateway: 10.8.0.1
+
+volumes:
+  backend-data:

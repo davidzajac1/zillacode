@@ -2,6 +2,9 @@ import { Typography } from "@material-tailwind/react";
 import { Footer } from "@/widgets/layout";
 import { LockClosedIcon } from "@heroicons/react/24/outline";
 import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import axios from "axios";
+import { getClientId } from "@/utils/clientId";
 import {
   Table,
   TableBody,
@@ -10,7 +13,20 @@ import {
   TableHead,
   TableRow,
   Paper,
+  Tooltip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from "@mui/material";
+import Flag from "@mui/icons-material/Flag";
+
+const LANGUAGES = [
+  { key: "pyspark", label: "PySpark", abbr: "PS", color: "#E25A1C" },
+  { key: "pandas", label: "Pandas", abbr: "PD", color: "#150458" },
+  { key: "scala", label: "Scala", abbr: "SC", color: "#DC322F" },
+  { key: "snowflake", label: "Snowflake/DBT", abbr: "SQL", color: "#29B5E8" },
+];
 
 function createData(number, title, industry, topics, difficulty) {
   return { number, title, industry, topics, difficulty };
@@ -411,8 +427,94 @@ const rows = [
   ),
 ];
 
+const DIFFICULTIES = ["Easy", "Medium", "Hard"];
+
+const TOPICS = Array.from(
+  new Set(rows.flatMap((row) => row.topics.map(({ topic }) => topic))),
+).sort();
+
 export function Questions() {
   const navigate = useNavigate();
+  const [completions, setCompletions] = useState({});
+  const [flags, setFlags] = useState({});
+  const [difficultyFilter, setDifficultyFilter] = useState(
+    () => window.localStorage.getItem("questions-difficulty-filter") ?? "All",
+  );
+  const [topicFilter, setTopicFilter] = useState(
+    () => window.localStorage.getItem("questions-topic-filter") ?? "All",
+  );
+  const [flaggedFilter, setFlaggedFilter] = useState(
+    () => window.localStorage.getItem("questions-flagged-filter") ?? "All",
+  );
+
+  useEffect(() => {
+    axios
+      .post(
+        import.meta.env.VITE_PUBLIC_API_BASE + "/get_completions",
+        JSON.stringify({ client_id: getClientId() }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      )
+      .then((response) => {
+        const completionsByProblem = {};
+
+        response.data["response"].forEach((completion) => {
+          const problemNumber = completion.problem_number;
+
+          if (!completionsByProblem[problemNumber]) {
+            completionsByProblem[problemNumber] = {};
+          }
+
+          completionsByProblem[problemNumber][completion.language] =
+            completion.completed_at;
+        });
+
+        setCompletions(completionsByProblem);
+      })
+      .catch(() => {});
+
+    axios
+      .post(
+        import.meta.env.VITE_PUBLIC_API_BASE + "/get_flags",
+        JSON.stringify({ client_id: getClientId() }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      )
+      .then((response) => {
+        const flagsByProblem = {};
+
+        response.data["response"].forEach((flag) => {
+          const problemNumber = flag.problem_number;
+
+          if (!flagsByProblem[problemNumber]) {
+            flagsByProblem[problemNumber] = {};
+          }
+
+          flagsByProblem[problemNumber][flag.language] = flag.flagged_at;
+        });
+
+        setFlags(flagsByProblem);
+      })
+      .catch(() => {});
+  }, []);
+
+  const filteredRows = rows.filter((row) => {
+    const difficultyMatches =
+      difficultyFilter === "All" || row.difficulty === difficultyFilter;
+    const topicMatches =
+      topicFilter === "All" ||
+      row.topics.some(({ topic }) => topic === topicFilter);
+    const isFlagged = Object.keys(flags[row.number] ?? {}).length > 0;
+    const flaggedMatches = flaggedFilter === "All" || isFlagged;
+
+    return difficultyMatches && topicMatches && flaggedMatches;
+  });
 
   return (
     <>
@@ -432,19 +534,87 @@ export function Questions() {
       <section className="relative bg-blue-gray-50/50 px-4 py-16">
         <div className="container mx-auto">
           <div className="relative -mt-64 mb-6 flex w-full min-w-0 flex-col break-words rounded-3xl bg-white shadow-xl shadow-gray-500/5">
+            <div className="flex flex-wrap gap-4 p-4">
+              <FormControl size="small" sx={{ minWidth: 160 }}>
+                <InputLabel id="difficulty-filter-label">
+                  Difficulty
+                </InputLabel>
+                <Select
+                  labelId="difficulty-filter-label"
+                  label="Difficulty"
+                  value={difficultyFilter}
+                  onChange={(event) => {
+                    setDifficultyFilter(event.target.value);
+                    window.localStorage.setItem(
+                      "questions-difficulty-filter",
+                      event.target.value,
+                    );
+                  }}
+                >
+                  <MenuItem value="All">All</MenuItem>
+                  {DIFFICULTIES.map((difficulty) => (
+                    <MenuItem key={difficulty} value={difficulty}>
+                      {difficulty}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ minWidth: 220 }}>
+                <InputLabel id="topic-filter-label">Topic</InputLabel>
+                <Select
+                  labelId="topic-filter-label"
+                  label="Topic"
+                  value={topicFilter}
+                  onChange={(event) => {
+                    setTopicFilter(event.target.value);
+                    window.localStorage.setItem(
+                      "questions-topic-filter",
+                      event.target.value,
+                    );
+                  }}
+                >
+                  <MenuItem value="All">All</MenuItem>
+                  {TOPICS.map((topic) => (
+                    <MenuItem key={topic} value={topic}>
+                      {topic}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ minWidth: 160 }}>
+                <InputLabel id="flagged-filter-label">Flagged</InputLabel>
+                <Select
+                  labelId="flagged-filter-label"
+                  label="Flagged"
+                  value={flaggedFilter}
+                  onChange={(event) => {
+                    setFlaggedFilter(event.target.value);
+                    window.localStorage.setItem(
+                      "questions-flagged-filter",
+                      event.target.value,
+                    );
+                  }}
+                >
+                  <MenuItem value="All">All</MenuItem>
+                  <MenuItem value="Flagged">Flagged Only</MenuItem>
+                </Select>
+              </FormControl>
+            </div>
             <TableContainer component={Paper} sx={{ borderRadius: 5 }}>
               <Table sx={{ minWidth: 650 }} aria-label="simple table">
                 <TableHead sx={{ bgcolor: "grey.400" }}>
                   <TableRow className="cursor-default">
+                    <TableCell align="center"></TableCell>
                     <TableCell>Number</TableCell>
                     <TableCell align="left">Title</TableCell>
                     <TableCell align="right">Industry</TableCell>
                     <TableCell align="right">Topics</TableCell>
                     <TableCell align="right">Difficulty</TableCell>
+                    <TableCell align="right">Completed</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {rows.map((row, i) => (
+                  {filteredRows.map((row, i) => (
                     <TableRow
                       key={row.number}
                       className="cursor-pointer"
@@ -463,6 +633,13 @@ export function Questions() {
                         },
                       }}
                     >
+                      <TableCell align="center">
+                        {Object.keys(flags[row.number] ?? {}).length > 0 && (
+                          <Tooltip title="Flagged for review">
+                            <Flag color="error" fontSize="small" />
+                          </Tooltip>
+                        )}
+                      </TableCell>
                       <TableCell>{row.number}</TableCell>
                       <TableCell align="left">{row.title}</TableCell>
                       <TableCell align="right">{row.industry}</TableCell>
@@ -491,6 +668,34 @@ export function Questions() {
                           }`}
                         >
                           {row.difficulty}
+                        </div>
+                      </TableCell>
+                      <TableCell align="right">
+                        <div className="flex items-center justify-end gap-1">
+                          {LANGUAGES.map((lang) => {
+                            const completedAt =
+                              completions[row.number]?.[lang.key];
+
+                            if (!completedAt) {
+                              return null;
+                            }
+
+                            return (
+                              <Tooltip
+                                key={lang.key}
+                                title={`${lang.label} completed on ${new Date(
+                                  completedAt,
+                                ).toLocaleString()}`}
+                              >
+                                <div
+                                  className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white"
+                                  style={{ backgroundColor: lang.color }}
+                                >
+                                  {lang.abbr}
+                                </div>
+                              </Tooltip>
+                            );
+                          })}
                         </div>
                       </TableCell>
                     </TableRow>

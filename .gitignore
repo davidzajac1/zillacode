@@ -1,5 +1,10 @@
 node_modules
 
+__pycache__/
+*.py[cod]
+
+docker-compose.override.yaml
+
 .terraform
 .terraform*
 terraform*
@@ -14,6 +19,8 @@ frontend/package-lock.json
 .env
 
 .mypy_cache
+
+*.db
 
 # dependencies
 frontend/node_modules
