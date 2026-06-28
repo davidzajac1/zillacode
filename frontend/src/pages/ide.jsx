@@ -4,11 +4,15 @@ import { sql } from "@codemirror/lang-sql";
 import { scala } from "@codemirror/legacy-modes/mode/clike";
 import { StreamLanguage } from "@codemirror/language";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import Flag from "@mui/icons-material/Flag";
+import OutlinedFlag from "@mui/icons-material/OutlinedFlag";
 import { useParams, useNavigate } from "react-router-dom";
 import { Grid } from "react-loader-spinner";
 import { useState, useEffect } from "react";
 import Split from "react-split";
 import axios from "axios";
+import { getClientId } from "@/utils/clientId";
 import {
   Button,
   ButtonGroup,
@@ -53,6 +57,7 @@ export function IDE() {
   const [valuePopout, setValuePopout] = useState(0);
   const [open, setOpen] = useState(false);
   const [open2, setOpen2] = useState(false);
+  const [flagged, setFlagged] = useState(false);
 
   const handlePopoutChange = (event, newValuePopout) => {
     setValuePopout(newValuePopout);
@@ -123,6 +128,7 @@ export function IDE() {
           to_run: toRun,
           problem: problemNumber,
           language: language,
+          client_id: getClientId(),
         }),
         {
           headers: {
@@ -202,6 +208,46 @@ export function IDE() {
       });
   }
 
+  async function getFlag() {
+    axios
+      .post(
+        import.meta.env.VITE_PUBLIC_API_BASE + "/get_flag",
+        JSON.stringify({
+          problem: problemNumber,
+          language: language,
+          client_id: getClientId(),
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      )
+      .then((response) => {
+        setFlagged(response.data["response"]);
+      });
+  }
+
+  async function toggleFlag() {
+    axios
+      .post(
+        import.meta.env.VITE_PUBLIC_API_BASE + "/toggle_flag",
+        JSON.stringify({
+          problem: problemNumber,
+          language: language,
+          client_id: getClientId(),
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      )
+      .then((response) => {
+        setFlagged(response.data["response"]);
+      });
+  }
+
   async function resetEditor() {
     axios
       .post(
@@ -226,6 +272,7 @@ export function IDE() {
 
   useEffect(() => {
     getProblem();
+    getFlag();
   }, [problemNumber, language]);
 
   const sharedContent = (
@@ -292,9 +339,22 @@ export function IDE() {
                 size="large"
                 edge="start"
                 color="inherit"
-                aria-label="menu"
+                aria-label="back to questions"
                 sx={{ mr: 2 }}
-              ></IconButton>
+                onClick={() => navigate("/questions")}
+              >
+                <ArrowBackIcon />
+              </IconButton>
+              Questions
+              <Box sx={{ flexGrow: 1 }} />
+              <IconButton
+                size="large"
+                color="inherit"
+                aria-label="flag for review"
+                onClick={toggleFlag}
+              >
+                {flagged ? <Flag color="error" /> : <OutlinedFlag />}
+              </IconButton>
             </Toolbar>
           </AppBar>
         </Box>
