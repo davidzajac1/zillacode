@@ -409,6 +409,78 @@ const rows = [
     [{ topic: "Complex Joins" }],
     "Easy",
   ),
+  createData(
+    53,
+    "Quarterly Revenue Unpivot",
+    "Software",
+    [{ topic: "Pivot Function" }, { topic: "Null Handling" }],
+    "Medium",
+  ),
+  createData(
+    54,
+    "Messy Ledger Amounts",
+    "Finance",
+    [{ topic: "Regular Expressions" }, { topic: "Null Handling" }],
+    "Medium",
+  ),
+  createData(
+    55,
+    "Support Ticket Dayparts",
+    "Information Technology",
+    [{ topic: "Datetime Operations" }, { topic: "Case When Statements" }],
+    "Medium",
+  ),
+  createData(
+    56,
+    "Login Streaks",
+    "Software",
+    [{ topic: "Windows Functions" }, { topic: "Datetime Operations" }],
+    "Hard",
+  ),
+  createData(
+    57,
+    "Customer Address History",
+    "Sales and Marketing",
+    [
+      { topic: "Complex Joins" },
+      { topic: "Union Statements" },
+      { topic: "Conditional Logic" },
+    ],
+    "Hard",
+  ),
+  createData(
+    58,
+    "Order Systems Reconciliation",
+    "E-Commerce",
+    [
+      { topic: "Complex Joins" },
+      { topic: "Conditional Logic" },
+      { topic: "Null Handling" },
+    ],
+    "Hard",
+  ),
+  createData(
+    59,
+    "Clickstream Sessionization",
+    "E-Commerce",
+    [
+      { topic: "Windows Functions" },
+      { topic: "Datetime Operations" },
+      { topic: "Aggregate Functions" },
+    ],
+    "Boss",
+  ),
+  createData(
+    60,
+    "Late Corrections Ledger",
+    "Finance",
+    [
+      { topic: "Windows Functions" },
+      { topic: "Complex Joins" },
+      { topic: "Datetime Operations" },
+    ],
+    "Boss",
+  ),
 ];
 
 export function Questions() {
@@ -487,7 +559,9 @@ export function Questions() {
                                 ? "bg-blue-400"
                                 : row.difficulty === "Hard"
                                   ? "bg-red-400"
-                                  : ""
+                                  : row.difficulty === "Boss"
+                                    ? "bg-purple-400"
+                                    : ""
                           }`}
                         >
                           {row.difficulty}

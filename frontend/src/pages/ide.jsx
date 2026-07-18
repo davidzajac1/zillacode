@@ -33,7 +33,7 @@ import {
 export function IDE() {
   const params = useParams();
   const navigate = useNavigate();
-  const numProblems = 52;
+  const numProblems = 60;
 
   const [pageLoad, setPageLoad] = useState(true);
   const [terminal, setTerminal] = useState(true);
