@@ -481,6 +481,78 @@ const rows = [
     ],
     "Boss",
   ),
+  createData(
+    61,
+    "Top Salaries With Ties",
+    "Human Resources",
+    [{ topic: "Windows Functions" }, { topic: "Aggregate Functions" }],
+    "Medium",
+  ),
+  createData(
+    62,
+    "Order Status Pivot",
+    "E-Commerce",
+    [
+      { topic: "Aggregate Functions" },
+      { topic: "Case When Statements" },
+      { topic: "Pivot Function" },
+    ],
+    "Medium",
+  ),
+  createData(
+    63,
+    "Customers Without Orders",
+    "Retail",
+    [{ topic: "Complex Joins" }, { topic: "Null Handling" }],
+    "Medium",
+  ),
+  createData(
+    64,
+    "Running Totals and Moving Averages",
+    "Retail",
+    [{ topic: "Windows Functions" }, { topic: "Mathematical Functions" }],
+    "Hard",
+  ),
+  createData(
+    65,
+    "Org Chart Depth",
+    "Human Resources",
+    [{ topic: "Complex Joins" }, { topic: "Union Statements" }],
+    "Hard",
+  ),
+  createData(
+    66,
+    "Median Without Percentile Functions",
+    "Banking",
+    [
+      { topic: "Windows Functions" },
+      { topic: "Mathematical Functions" },
+      { topic: "Aggregate Functions" },
+    ],
+    "Hard",
+  ),
+  createData(
+    67,
+    "Checkout Funnel",
+    "E-Commerce",
+    [
+      { topic: "Aggregate Functions" },
+      { topic: "Complex Joins" },
+      { topic: "Datetime Operations" },
+    ],
+    "Boss",
+  ),
+  createData(
+    68,
+    "Bill of Materials Rollup",
+    "Manufacturing",
+    [
+      { topic: "Complex Joins" },
+      { topic: "Union Statements" },
+      { topic: "Aggregate Functions" },
+    ],
+    "Boss",
+  ),
 ];
 
 export function Questions() {

@@ -33,6 +33,14 @@ export function Navbar() {
           Coding Questions
         </Link>
       </li>
+      <li>
+        <Link
+          to="/theory"
+          className="flex items-center gap-1 p-1 font-normal"
+        >
+          Theory Questions
+        </Link>
+      </li>
     </>
   );
 

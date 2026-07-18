@@ -185,7 +185,7 @@ def send_code(to_run, language, problem_num):
 
         return {"result": "Problem Correct!"}
 
-    elif language == "pandas":
+    elif language in ("pandas", "sql"):
 
         if TESTING:
 

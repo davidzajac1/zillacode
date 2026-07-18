@@ -33,7 +33,7 @@ import {
 export function IDE() {
   const params = useParams();
   const navigate = useNavigate();
-  const numProblems = 60;
+  const numProblems = 68;
 
   const [pageLoad, setPageLoad] = useState(true);
   const [terminal, setTerminal] = useState(true);
@@ -41,6 +41,19 @@ export function IDE() {
     params.problemNumber ?? "1",
   );
   const [language, setLanguage] = useState("pyspark");
+  const [availableLanguages, setAvailableLanguages] = useState([
+    "pyspark",
+    "scala",
+    "pandas",
+    "snowflake",
+  ]);
+  const languageLabels = {
+    pyspark: "PySpark",
+    scala: "Scala Spark",
+    pandas: "Pandas",
+    snowflake: "Snowflake/DBT",
+    sql: "SQL",
+  };
   const [ProblemDescription, setProblemDescription] = useState("");
   const [code, setCode] = useState("");
   const [solution, setSolution] = useState("");
@@ -164,7 +177,17 @@ export function IDE() {
       .then((response) => {
         setPageLoad(false);
 
-        if (language === "snowflake") {
+        const languageData = response.data["response"]["language"];
+        setAvailableLanguages(Object.keys(languageData));
+
+        const effectiveLanguage = languageData[language]
+          ? language
+          : Object.keys(languageData)[0];
+        if (effectiveLanguage !== language) {
+          setLanguage(effectiveLanguage);
+        }
+
+        if (effectiveLanguage === "snowflake") {
           let snowflakeProblemDescription = response.data["response"][
             "description"
           ]
@@ -176,29 +199,19 @@ export function IDE() {
         }
 
         let savedSolution = window.localStorage.getItem(
-          language + "-" + problemNumber,
+          effectiveLanguage + "-" + problemNumber,
         );
 
         if (savedSolution !== null) {
           setCode(savedSolution);
         } else {
-          setCode(
-            response.data["response"]["language"][language]["display_start"],
-          );
+          setCode(languageData[effectiveLanguage]["display_start"]);
         }
 
-        setSolution(
-          response.data["response"]["language"][language]["solution"],
-        );
-        setExplanation(
-          response.data["response"]["language"][language]["explanation"],
-        );
-        setComplexity(
-          response.data["response"]["language"][language]["complexity"],
-        );
-        setOptimization(
-          response.data["response"]["language"][language]["optimization"],
-        );
+        setSolution(languageData[effectiveLanguage]["solution"]);
+        setExplanation(languageData[effectiveLanguage]["explanation"]);
+        setComplexity(languageData[effectiveLanguage]["complexity"]);
+        setOptimization(languageData[effectiveLanguage]["optimization"]);
       });
   }
 
@@ -247,7 +260,7 @@ export function IDE() {
           extensions={[
             language == "scala"
               ? StreamLanguage.define(scala)
-              : language == "snowflake"
+              : language == "snowflake" || language == "sql"
                 ? sql()
                 : python(),
           ]}
@@ -367,10 +380,11 @@ export function IDE() {
                           onChange={handleChange}
                           input={<OutlinedInput label="Language" />}
                         >
-                          <MenuItem value="pyspark">PySpark</MenuItem>
-                          <MenuItem value="scala">Scala Spark</MenuItem>
-                          <MenuItem value="pandas">Pandas</MenuItem>
-                          <MenuItem value="snowflake">Snowflake/DBT</MenuItem>
+                          {availableLanguages.map((lang) => (
+                            <MenuItem key={lang} value={lang}>
+                              {languageLabels[lang] ?? lang}
+                            </MenuItem>
+                          ))}
                         </Select>
                       </FormControl>
                     </Box>
@@ -417,7 +431,7 @@ export function IDE() {
                           extensions={[
                             language == "scala"
                               ? StreamLanguage.define(scala)
-                              : language == "snowflake"
+                              : language == "snowflake" || language == "sql"
                                 ? sql()
                                 : python(),
                           ]}

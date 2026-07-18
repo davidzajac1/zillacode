@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Navbar } from "@/widgets/layout";
-import { Home, IDE, Questions } from "@/pages";
+import { Home, IDE, Questions, Theory } from "@/pages";
 
 function App() {
   return (
@@ -12,6 +12,7 @@ function App() {
         <Route exact path="/home" element={<Home />} />
         <Route path="/ide/:problemNumber" element={<IDE />} />
         <Route exact path="/questions" element={<Questions />} />
+        <Route exact path="/theory" element={<Theory />} />
         <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
     </>

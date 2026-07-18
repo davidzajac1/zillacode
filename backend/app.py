@@ -6,6 +6,7 @@ from constants import (
     problems,
     pyspark_problem_start,
     scala_problem_start,
+    theory_problems,
 )
 from flask import Flask, request
 from flask_cors import CORS
@@ -31,6 +32,35 @@ def get_problem():
     return {"response": problem}
 
 
+@app.route("/get_theory_problems", methods=["POST"])
+def get_theory_problems():
+    logger("Start get_theory_problems()")
+
+    listing = [
+        {
+            "id": theory_id,
+            "title": theory_problem["title"],
+            "type": theory_problem["type"],
+            "topic": theory_problem["topic"],
+            "subtopic": theory_problem["subtopic"],
+            "difficulty": theory_problem["difficulty"],
+            "tags": theory_problem["tags"],
+        }
+        for theory_id, theory_problem in theory_problems.items()
+    ]
+
+    return {"response": listing}
+
+
+@app.route("/get_theory_problem", methods=["POST"])
+def get_theory_problem():
+    logger("Start get_theory_problem()")
+
+    data = json.loads(request.data)
+
+    return {"response": theory_problems[data["problem"]]}
+
+
 @app.route("/run_code", methods=["POST"])
 def run_code():
     logger("Start run_code()")
@@ -53,6 +83,16 @@ def run_code():
     if language == "snowflake":
 
         payload = send_code({"to_run": data["to_run"], "tests": problems[problem]["tests"]}, language, problem)
+
+        return {"response": payload["result"]}
+
+    if language == "sql":
+
+        payload = send_code({"to_run": data["to_run"], "tests": problems[problem]["tests"], "engine": "duckdb"}, language, problem)
+
+        if payload.get("errorMessage"):
+
+            return {"response": {"errorMessage": payload["errorMessage"]}}
 
         return {"response": payload["result"]}
 

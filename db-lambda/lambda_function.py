@@ -33,6 +33,38 @@ def lambda_handler(event, context):
     print(event)
     print()
 
+    if event.get("engine") == "duckdb":
+        import duckdb
+
+        query = event["to_run"].replace(";", "")
+        for test in event["tests"]:
+            input_ = test["input"]
+            expected_output = sort_dict(test["expected_output"])
+
+            con = duckdb.connect()
+            try:
+                for df_name in input_:
+                    con.register(df_name, pd.DataFrame(input_[df_name]))
+                df_result = con.execute(query).fetchdf()
+            except Exception as e:
+                return {"errorMessage": str(e)}
+            finally:
+                con.close()
+
+            result = sort_dict(df_result.to_dict(orient="records"))
+
+            if result != expected_output:
+
+                print(
+                    f"Returned Response: INCORRECT\n\nINPUT:\n{to_markdown(input_, True)}\n\nOUTPUT:\n{to_markdown(result, False)}\n\nEXPECTED OUTPUT:\n{to_markdown(expected_output, False)}"
+                )
+
+                return {
+                    "result": f"INCORRECT\n\nINPUT:\n{to_markdown(input_, True)}\n\nOUTPUT:\n{to_markdown(result, False)}\n\nEXPECTED OUTPUT:\n{to_markdown(expected_output, False)}"
+                }
+
+        return {"result": "Problem Correct!"}
+
     ldic = locals()
 
     code = event["to_run"]
