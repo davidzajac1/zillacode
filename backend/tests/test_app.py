@@ -1,4 +1,5 @@
 import boto3
+from constants import problems, theory_problems
 
 
 def test_get_problem(app, client):
@@ -14,7 +15,7 @@ def test_run_code(app, client):
         "/run_code",
         json={
             "problem": "1",
-            "to_run": "from pyspark.sql import SparkSession\nfrom pyspark.sql import functions as F\nfrom pyspark.sql import Window as W\nimport pyspark\nimport datetime\nimport json\n\nspark = SparkSession.builder.appName('run-pyspark-code').getOrCreate()\n\ndef etl(df_customers, df_orders):\n\tdf = df_customers.join(df_orders, df_customers.id ==  df_orders.customerId, 'left')\n\n\tdf = df.filter(df.customerId.isNull())\n\n\treturn df.select(['name'])",
+            "to_run": problems["1"]["language"]["pyspark"]["solution"],
             "language": "pyspark",
         },
     )
@@ -22,3 +23,43 @@ def test_run_code(app, client):
     assert response.status_code == 200
 
     assert response.json["response"] == "Problem Correct!"
+
+
+def test_run_code_sql(app, client):
+
+    response = client.post(
+        "/run_code",
+        json={
+            "problem": "61",
+            "to_run": problems["61"]["language"]["sql"]["solution"],
+            "language": "sql",
+        },
+    )
+
+    assert response.status_code == 200
+
+    assert response.json["response"] == "Problem Correct!"
+
+
+def test_get_theory_problems(app, client):
+
+    response = client.post("/get_theory_problems", json={})
+
+    assert response.status_code == 200
+
+    listing = response.json["response"]
+
+    assert len(listing) == len(theory_problems)
+
+    assert {"id", "title", "type", "topic", "subtopic", "difficulty", "tags"} <= set(listing[0].keys())
+
+
+def test_get_theory_problem(app, client):
+
+    theory_id = next(iter(theory_problems))
+
+    response = client.post("/get_theory_problem", json={"problem": theory_id})
+
+    assert response.status_code == 200
+
+    assert response.json["response"]["title"] == theory_problems[theory_id]["title"]

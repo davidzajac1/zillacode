@@ -12435,4 +12435,2913 @@ problems = {
 }
 
 
-theory_problems = {}
+theory_problems = {'t-spark-01': {'type': 'mcq',
+                'topic': 'Spark',
+                'subtopic': 'lazy_evaluation',
+                'difficulty': 'Intermediate',
+                'tags': ['lazy_evaluation', 'transformations', 'actions', 'dag'],
+                'title': 'When does Spark actually run?',
+                'question': '<p>A colleague writes this PySpark job and complains that "the filter is instant but the last line is slow, so '
+                            '<code>count()</code> must be inefficient":</p><pre>df = spark.read.parquet("s3://logs/")        # line 1\n'
+                            'errors = df.filter(df.level == "ERROR")      # line 2\n'
+                            'enriched = errors.join(dims, "service")      # line 3\n'
+                            'print(enriched.count())                      # line 4</pre><p>What is actually happening?</p>',
+                'options': [{'key': 'A',
+                             'text': 'Lines 1–3 only build a logical plan; line 4 is the first action, so it triggers reading, filtering, and '
+                                     'joining all at once'},
+                            {'key': 'B', 'text': 'Spark caches the filter result automatically, so only the join runs on line 4'},
+                            {'key': 'C', 'text': 'The filter ran eagerly on line 2 but its result was garbage-collected before line 4'},
+                            {'key': 'D', 'text': 'count() is a slow operation and should be replaced with len(enriched.collect())'}],
+                'correct_key': 'A',
+                'option_explanations': {'A': 'Correct — filter/join are lazy transformations that only extend the logical plan. The action (count) '
+                                             "triggers the whole DAG: scan, filter, shuffle, join. The 'slow last line' is the entire job executing.",
+                                        'B': 'Wrong — Spark never caches automatically between actions; without an explicit cache()/persist(), '
+                                             're-running another action would recompute the lineage from the source.',
+                                        'C': 'Wrong — nothing executed on line 2 at all; transformations are metadata-only until an action runs, so '
+                                             'there was no result to garbage-collect.',
+                                        'D': 'Wrong — collect() materializes every row on the driver and then counts in Python; it is strictly more '
+                                             'expensive and a common cause of driver OOM. count() aggregates distributed partial counts.'},
+                'explanation': '<p>Transformations (filter, join, select, groupBy) are <strong>lazy</strong>: they build a DAG/logical plan. Only '
+                               '<strong>actions</strong> (count, collect, write, show) trigger execution, at which point Catalyst optimizes the '
+                               'whole plan — e.g. pushing the filter down into the Parquet scan. This is why per-line timing of transformations is '
+                               'meaningless, and why the cost you observe always lands on the first action.</p>'},
+ 't-spark-02': {'type': 'mcq',
+                'topic': 'Spark',
+                'subtopic': 'shuffle',
+                'difficulty': 'Intermediate',
+                'tags': ['shuffle', 'narrow_transformation', 'wide_transformation'],
+                'title': 'Which operation forces a shuffle?',
+                'question': '<p>A pipeline does the following to a 2&nbsp;TB DataFrame. Which single operation necessarily forces a <strong>full '
+                            'shuffle</strong> of data across the cluster?</p>',
+                'options': [{'key': 'A', 'text': 'df.withColumn("amount_eur", col("amount") * rate)'},
+                            {'key': 'B', 'text': 'df.filter(col("country") == "DE")'},
+                            {'key': 'C', 'text': 'df.groupBy("user_id").agg(sum("amount"))'},
+                            {'key': 'D', 'text': 'df.select("user_id", "amount")'}],
+                'correct_key': 'C',
+                'option_explanations': {'A': 'Wrong — computing a column from values already in the row is per-row work; no data movement is needed.',
+                                        'B': 'Wrong — filter is a narrow transformation: each output partition depends on exactly one input '
+                                             'partition, so rows never leave their executor.',
+                                        'C': 'Correct — aggregating by key requires all rows with the same user_id on the same partition, so Spark '
+                                             'hash-partitions and moves data across the network (though partial aggregation reduces what actually '
+                                             'travels).',
+                                        'D': 'Wrong — column pruning drops columns in place; like filter, it is narrow.'},
+                'explanation': '<p><strong>Narrow</strong> transformations (filter, select, withColumn, most row-wise ops) keep each output '
+                               'partition dependent on one input partition — no network movement. <strong>Wide</strong> transformations (groupBy, '
+                               'join on non-co-partitioned data, distinct, repartition, orderBy) require rows to be redistributed by key: Spark '
+                               'writes shuffle files, transfers them across the network, and reads them back — the single most expensive primitive '
+                               'in a Spark job, and the boundary where stages split. Knowing which category an operation falls into is how you '
+                               "predict a job's cost from its code.</p>"},
+ 't-spark-03': {'type': 'mcq',
+                'topic': 'Spark',
+                'subtopic': 'broadcast_join',
+                'difficulty': 'Advanced',
+                'tags': ['broadcast_join', 'join_strategy', 'driver_oom'],
+                'title': 'A broadcast join gone wrong',
+                'question': '<p>A 5&nbsp;TB fact table is joined to a "dimension" table. A developer, having read that broadcast joins are fast, '
+                            'writes <code>facts.join(broadcast(dim), "key")</code>. The job dies with an out-of-memory error <em>before any task of '
+                            'the join stage starts</em>. The dimension table turns out to be 25&nbsp;GB. What happened?</p>',
+                'options': [{'key': 'A',
+                             'text': 'The fact table was too large to broadcast, so Spark fell back to a sort-merge join and spilled to disk'},
+                            {'key': 'B', 'text': 'AQE detected skew in the fact table and split partitions until the scheduler ran out of memory'},
+                            {'key': 'C',
+                             'text': 'The broadcast forced the 25 GB dimension to be collected to the driver and then copied to every executor, '
+                                     'blowing memory limits'},
+                            {'key': 'D', 'text': 'The join keys were null-heavy, sending all null rows to a single executor'}],
+                'correct_key': 'C',
+                'option_explanations': {'A': 'Wrong — the developer explicitly broadcast the dimension, not the fact table, and a sort-merge '
+                                             'fallback would fail during shuffle tasks, not before the stage starts.',
+                                        'B': "Wrong — AQE skew handling splits oversized partitions of a shuffle join; it doesn't apply to an "
+                                             "explicit broadcast, and it wouldn't OOM the driver before the stage.",
+                                        'C': 'Correct — broadcast() collects the entire table to the driver, then ships a full copy to each '
+                                             'executor. 25 GB exceeds any sane driver/executor memory budget; the failure happens during broadcast '
+                                             'construction, before join tasks run — exactly the observed symptom.',
+                                        'D': 'Wrong — null-key skew causes one straggler/OOM task during the join stage, not a pre-stage driver '
+                                             'failure.'},
+                'explanation': '<p>A broadcast (map-side) join eliminates the shuffle by replicating the small side to every executor — brilliant '
+                               'when the small side is actually small (default auto-broadcast threshold: 10&nbsp;MB, commonly raised to a few '
+                               'hundred MB). The failure signature is diagnostic: broadcast construction happens on the driver <em>before</em> join '
+                               'tasks launch, so a too-big broadcast kills the driver first. Rules of thumb: broadcast only tables that fit '
+                               'comfortably in memory after compression, remember the broadcast is per-executor memory overhead, and let AQE choose '
+                               'the strategy when sizes are uncertain — its runtime statistics beat static hints.</p>'},
+ 't-spark-04': {'type': 'mcq',
+                'topic': 'Spark',
+                'subtopic': 'aqe',
+                'difficulty': 'Advanced',
+                'tags': ['aqe', 'adaptive_query_execution', 'skew', 'partition_coalescing'],
+                'title': 'What can AQE actually fix?',
+                'question': '<p>Adaptive Query Execution (Spark 3.x) re-optimizes plans at runtime using statistics from completed shuffle stages. '
+                            'Which of these problems can AQE fix <em>on its own</em>?</p>',
+                'options': [{'key': 'A', 'text': 'A Python UDF that processes rows 100× slower than the equivalent built-in function'},
+                            {'key': 'B', 'text': 'A join where one shuffle partition is 40× larger than the median, causing one straggler task'},
+                            {'key': 'C', 'text': "An exploding join caused by a duplicate-key many-to-many relationship the developer didn't intend"},
+                            {'key': 'D', 'text': 'A source table stored as millions of small JSON files, making the initial scan slow'}],
+                'correct_key': 'B',
+                'option_explanations': {'A': 'Wrong — AQE optimizes the physical plan shape (joins, partitions), not the per-row cost of user code; '
+                                             'a slow UDF stays slow.',
+                                        'B': "Correct — skew-join optimization is one of AQE's three headline features: it detects oversized shuffle "
+                                             'partitions at runtime and splits them into subpartitions joined in parallel, removing the straggler.',
+                                        'C': 'Wrong — a many-to-many join is semantically what the query asks for; AQE can change join strategy, not '
+                                             'the row multiplication your join condition produces.',
+                                        'D': 'Wrong — AQE acts on runtime shuffle statistics; the initial file scan happens before any shuffle '
+                                             'exists, so small-file pain must be fixed at the storage layer (compaction) or reader settings.'},
+                'explanation': "<p>AQE's three core capabilities: (1) <strong>coalescing shuffle partitions</strong> — merging small post-shuffle "
+                               'partitions so you stop hand-tuning spark.sql.shuffle.partitions; (2) <strong>switching join strategies at '
+                               'runtime</strong> — e.g. demoting to broadcast when a filtered side turns out small; (3) <strong>skew-join '
+                               'splitting</strong> — cutting oversized partitions into parallel subjoins. The common thread: AQE fixes '
+                               '<em>plan-shape</em> problems it can observe from shuffle statistics. It cannot speed up user code, fix storage '
+                               'layout, or repair join semantics — knowing this boundary is what the question tests.</p>'},
+ 't-spark-05': {'type': 'mcq',
+                'topic': 'Spark',
+                'subtopic': 'oom_causes',
+                'difficulty': 'Advanced',
+                'tags': ['oom', 'collect', 'driver_memory', 'executor_memory'],
+                'title': 'Diagnosing a driver OOM',
+                'question': '<p>A nightly job aggregates 500&nbsp;GB of events to ~2&nbsp;million summary rows, then fails with '
+                            '<code>java.lang.OutOfMemoryError</code> — but the Spark UI shows all stages completed successfully. The last lines of '
+                            'the job are:</p><pre>summary = events.groupBy("user_id").agg(...)\n'
+                            'rows = summary.collect()\n'
+                            'for r in rows: kafka_producer.send(topic, serialize(r))</pre><p>What is the most likely cause?</p>',
+                'options': [{'key': 'A', 'text': "The aggregation state for 2 million groups cannot fit in the executors' shuffle memory"},
+                            {'key': 'B', 'text': 'collect() pulls all 2 million rows into the driver JVM at once, exceeding driver memory'},
+                            {'key': 'C', 'text': 'The Kafka producer is buffering unsent messages, exhausting executor memory'},
+                            {'key': 'D', 'text': 'Executor memory is too small for the groupBy shuffle'}],
+                'correct_key': 'B',
+                'option_explanations': {'A': 'Wrong — aggregation state spills to disk under memory pressure rather than hard-failing after stages '
+                                             'complete.',
+                                        'B': 'Correct — stages completing then the job dying is the classic signature of a driver-side failure. '
+                                             'collect() materializes the entire result in the driver JVM; the fix is foreachPartition/writing from '
+                                             'executors, or streaming the result out instead of collecting it.',
+                                        'C': 'Wrong — the producer here runs in the driver (after collect), not on executors; and the failure would '
+                                             'still be driver memory, caused by the collected rows.',
+                                        'D': 'Wrong — the UI shows all stages (including the shuffle) completed; an executor OOM would fail tasks '
+                                             'mid-stage with lost executors.'},
+                'explanation': '<p>Locating an OOM starts with <em>where</em>: executor OOMs fail tasks mid-stage (skewed partitions, giant '
+                               'broadcast copies, memory-hungry UDFs); <strong>driver</strong> OOMs typically strike after stages finish, caused by '
+                               'collect(), toPandas(), huge task-result accumulation, or an enormous query plan. The production pattern for pushing '
+                               'results to external systems is <code>foreachPartition</code> — each executor opens its own producer and sends its '
+                               'partition — so the data never funnels through the driver. collect() is for small results you can afford to hold in '
+                               'one process, nothing else.</p>'},
+ 't-spark-06': {'type': 'mcq',
+                'topic': 'Spark',
+                'subtopic': 'caching',
+                'difficulty': 'Intermediate',
+                'tags': ['cache', 'persist', 'lineage', 'storage_level'],
+                'title': 'When does cache() actually help?',
+                'question': '<p>In which scenario does adding <code>df.cache()</code> most clearly improve performance?</p>',
+                'options': [{'key': 'A', 'text': 'Just before a collect(), to make the collect faster'},
+                            {'key': 'B',
+                             'text': 'An expensively-computed DataFrame is used by four different downstream aggregations in the same job'},
+                            {'key': 'C', 'text': 'A DataFrame is read from Parquet, transformed, and written out once in a linear pipeline'},
+                            {'key': 'D', 'text': 'A DataFrame is too large to fit in cluster memory and is used once'}],
+                'correct_key': 'B',
+                'option_explanations': {'A': "Wrong — collect's cost is materializing and transferring rows to the driver; caching first just "
+                                             'materializes twice.',
+                                        'B': 'Correct — without caching, each of the four actions recomputes the full lineage from the source; '
+                                             'caching materializes the expensive intermediate once and the four aggregations read it from '
+                                             'memory/disk.',
+                                        'C': 'Wrong — with a single action, the lineage runs exactly once anyway; caching adds memory pressure and '
+                                             'an extra materialization for zero reuse.',
+                                        'D': "Wrong — caching a once-used DataFrame that doesn't fit forces eviction churn or disk spill for no "
+                                             'reuse benefit; it can actively slow the job.'},
+                'explanation': '<p>The rule: cache when a computed DataFrame is <strong>reused across multiple actions</strong> (or iteratively, as '
+                               'in ML training loops) and the recomputation is expensive relative to storing it. Remember cache() is itself lazy — '
+                               "it takes effect at the next action — and MEMORY_AND_DISK is the default storage level for DataFrames, so 'doesn't "
+                               "fit in memory' degrades to disk rather than failing. Equally important is <code>unpersist()</code> when done: cached "
+                               'blocks compete with shuffle and execution memory for the unified memory pool.</p>'},
+ 't-spark-07': {'type': 'short_answer',
+                'topic': 'Spark',
+                'subtopic': 'shuffle_mechanics',
+                'difficulty': 'Intermediate',
+                'tags': ['shuffle', 'stage_boundary', 'spill', 'network'],
+                'title': 'Explain what a shuffle physically does',
+                'question': '<p>Explain, as to a junior engineer, what physically happens during a Spark shuffle — from the map side to the reduce '
+                            'side — and why shuffles are the main cost driver in most Spark jobs. Mention at least one thing that makes a shuffle '
+                            'spill to disk and one way to reduce shuffle volume.</p>',
+                'rubric': {'1': "Says 'data moves between nodes' or 'shuffle is slow' with no mechanism — no mention of map/reduce sides, "
+                                'partitioning by key, or disk involvement.',
+                           '3': 'Describes hash-partitioning rows by key, map-side shuffle files written to local disk, reduce-side fetching over '
+                                'the network, and identifies network+disk IO as the cost. May miss spill conditions or mitigation.',
+                           '5': 'All of 3, plus: stage boundaries at shuffles; map-side partial aggregation (combiners) reducing transferred bytes; '
+                                'spill when execution memory for sort/aggregation state is exhausted; concrete mitigations (pre-filtering/pruning '
+                                'before shuffle, broadcast join to avoid it, sensible partition counts / AQE coalescing).'},
+                'follow_up_probes': ['Why does a shuffle create a stage boundary, and what does that imply for failure recovery?',
+                                     "What is map-side combine and which operations can't use it?",
+                                     'How would you spot excessive spill in the Spark UI, and what would you change first?'],
+                'explanation': '<p>A shuffle repartitions data by key: each <em>map</em> task hash-partitions its rows and writes one sorted block '
+                               'per reduce partition into local <strong>shuffle files</strong>; each <em>reduce</em> task then fetches its block '
+                               'from every map task over the network and merges them. The cost is therefore serialization + local disk write + '
+                               'network transfer + disk read + merge — the only place a Spark job pays all of these at once, which is why stages '
+                               'split at shuffles and why shuffle bytes is the first metric to check in the UI. Spills happen when sort/aggregation '
+                               'state exceeds the execution-memory share. Volume reducers: filter and prune columns before the wide operation, use '
+                               'aggregations that combine map-side (sum/count, not collect_list), broadcast the small join side, and let AQE '
+                               'coalesce undersized result partitions.</p>'},
+ 't-spark-08': {'type': 'short_answer',
+                'topic': 'Spark',
+                'subtopic': 'skew_handling',
+                'difficulty': 'Advanced',
+                'tags': ['skew', 'salting', 'aqe', 'straggler'],
+                'title': 'Diagnosing and fixing a skewed join',
+                'question': '<p>A daily join between page-view events (2&nbsp;TB) and a user dimension runs 3 hours; the Spark UI shows 199 of 200 '
+                            'tasks in the join stage finishing in ~2 minutes and one task running for hours before sometimes dying with OOM. Walk '
+                            "through: (a) what is happening and how you'd confirm it, (b) at least three distinct mitigations with their trade-offs, "
+                            "(c) which you'd try first and why.</p>",
+                'rubric': {'1': "Suggests 'add more memory/executors' or 'repartition' without connecting the single-straggler symptom to key skew "
+                                "or explaining why more resources don't fix one giant partition.",
+                           '3': 'Correctly diagnoses hot-key data skew (e.g. null/default user_ids or a bot user), confirms via task-level '
+                                'shuffle-read sizes or a count-by-key query, and offers two real mitigations (AQE skew join, salting, '
+                                'filtering/separating hot keys, broadcast) with some reasoning.',
+                           '5': 'All of 3, plus: nuanced ordering — check for degenerate keys (nulls/defaults) first since excluding or '
+                                'special-casing them is free; enable AQE skew handling as the low-effort general fix; salting explained correctly '
+                                '(salt fact side ×N, replicate dimension side ×N) with its cost (dimension replication, code complexity); broadcast '
+                                "as a skew-immune alternative when the dimension fits; notes that more executors don't help a single-partition "
+                                'bottleneck.'},
+                'follow_up_probes': ["Why doesn't increasing executor count help here?",
+                                     'Walk me through exactly how salting changes the join keys on both sides.',
+                                     'What does AQE need in order to detect and split a skewed partition?'],
+                'explanation': '<p>One straggler among uniform tasks is the fingerprint of <strong>key skew</strong>: one join key (very often NULL '
+                               "or a default like 'unknown' — or a bot account) owns a huge share of rows, and hash partitioning sends them all to "
+                               "one task. Confirm with the UI's per-task shuffle-read distribution or "
+                               '<code>events.groupBy("user_id").count().orderBy(desc("count"))</code>. Mitigation ladder: (1) degenerate keys — '
+                               'filter nulls out of the join or handle them separately (free, and very common); (2) AQE skew-join splitting — '
+                               'configuration, no code change; (3) broadcast the dimension if it fits — hash distribution stops mattering entirely; '
+                               "(4) salting — append a random suffix 0..N-1 to the hot side's key and explode the dimension side with all N "
+                               'suffixes, spreading the hot key across N tasks at the cost of replicating the dimension; (5) isolate hot keys into '
+                               'their own broadcast join and union results. More hardware never fixes skew: the bottleneck is one partition, not '
+                               'total capacity.</p>'},
+ 't-spark-09': {'type': 'short_answer',
+                'topic': 'Spark',
+                'subtopic': 'memory_management',
+                'difficulty': 'Advanced',
+                'tags': ['memory_model', 'unified_memory', 'spill', 'oom'],
+                'title': "Spark's executor memory model",
+                'question': '<p>Explain how memory inside a Spark executor is organized (unified memory model) and use it to answer: (a) why can a '
+                            'job with plenty of total cluster memory still OOM on one executor? (b) why does heavy caching sometimes make unrelated '
+                            "shuffles slower? (c) name two settings or practices you'd reach for when an executor OOMs during a wide "
+                            'aggregation.</p>',
+                'rubric': {'1': 'Treats executor memory as one undifferentiated pool; cannot explain any of the three sub-questions mechanistically.',
+                           '3': 'Describes the split between execution memory (shuffles, sorts, aggregations) and storage memory (cached blocks) '
+                                'sharing a unified region that can borrow from each other, plus overhead/off-heap; answers (a) via '
+                                'per-task/per-partition concentration (skew) and at least one of (b)/(c) plausibly.',
+                           '5': 'All of 3, plus: storage can be evicted by execution but only down to a protected fraction '
+                                '(spark.memory.storageFraction), which is exactly why heavy caching squeezes shuffle memory and causes spills — '
+                                'answering (b) precisely; (a) tied to skew/task-level concentration and memory-hungry operations like collect_list '
+                                'or pandas UDFs; (c) concrete: more partitions (smaller per-task state), avoiding groupByKey-style wholesale '
+                                'collection, spilling-friendly aggregations, increasing memoryOverhead for PySpark, salting.'},
+                'follow_up_probes': ["Where do PySpark UDFs' memory live, and why does that cause container kills rather than JVM OOMs?",
+                                     'What does spark.memory.storageFraction protect, exactly?',
+                                     'Why does increasing shuffle partition count reduce OOM risk for aggregations?'],
+                'explanation': "<p>Within the JVM heap, Spark's <strong>unified memory region</strong> is shared between <em>execution</em> memory "
+                               '(shuffle sorts, hash-aggregation state, join buffers) and <em>storage</em> memory (cache blocks). They borrow from '
+                               'each other, but cached blocks are only evictable down to a protected fraction — so a cache-heavy job leaves less '
+                               'room for shuffles, causing spill-to-disk and slowdowns (b). Total cluster memory is irrelevant to a single task '
+                               'whose partition or hash-map state is oversized — skewed keys or state-heavy operations OOM one executor while others '
+                               'idle (a). For (c): raise shuffle partition count so each task holds less state, replace collect-everything patterns '
+                               '(groupByKey, giant collect_list) with reducing aggregations, and for PySpark remember Python workers live in '
+                               '<em>overhead</em> memory outside the JVM heap — the fix for container kills is spark.executor.memoryOverhead, not '
+                               'executor-memory.</p>'},
+ 't-spark-10': {'type': 'short_answer',
+                'topic': 'Spark',
+                'subtopic': 'partitioning_output',
+                'difficulty': 'Advanced',
+                'tags': ['repartition', 'coalesce', 'small_files', 'output_layout'],
+                'title': 'repartition vs coalesce and the small-files problem',
+                'question': '<p>A job ends with <code>df.write.partitionBy("dt").parquet(path)</code> and produces 20,000 tiny files per date. '
+                            'Explain: (a) why so many files appear, (b) the difference between <code>repartition()</code> and '
+                            "<code>coalesce()</code> and which to use here, (c) why small files hurt downstream consumers, and (d) how you'd choose "
+                            'a target file size/count.</p>',
+                'rubric': {'1': "Knows one of the two operators or says 'merge the files' without connecting file count to upstream partition count "
+                                'or explaining the shuffle/no-shuffle distinction.',
+                           '3': 'Explains files-per-partition-per-key mechanics (each task writes its own file into each dt directory), the core '
+                                'distinction — repartition shuffles to N partitions (can increase), coalesce merges to fewer without a full shuffle '
+                                '— and picks repartition("dt") (or repartition with columns) so each date\'s data is concentrated; mentions '
+                                'metadata/listing overhead of small files.',
+                           '5': "All of 3, plus: coalesce's trap (it collapses upstream parallelism since it avoids a shuffle — coalesce(1) makes "
+                                'the whole job single-threaded); repartition by the partition column aligns task boundaries with output directories '
+                                'so each date gets few large files; downstream cost quantified (NameNode/S3 listing, per-file open overhead, tiny '
+                                "row groups defeating Parquet's columnar compression and predicate pushdown); sizing heuristic ~128MB–1GB per file, "
+                                'or maxRecordsPerFile / AQE-driven tuning; mentions compaction jobs or table formats (Delta/Iceberg OPTIMIZE) as the '
+                                'retrofit fix.'},
+                'follow_up_probes': ['Why does coalesce(1) often make the entire job slow rather than just the write?',
+                                     'How do Delta/Iceberg address small files after the fact?',
+                                     'What breaks first when a table directory reaches millions of files?'],
+                'explanation': '<p>File count = (number of write-stage tasks) × (distinct partition values each task holds): 200 shuffle partitions '
+                               'each containing rows for 100 dates → 20,000 files. <code>repartition(n or cols)</code> performs a full shuffle and '
+                               'can raise or lower partition count — <code>repartition("dt")</code> clusters each date into the same tasks so each '
+                               'dt directory receives a handful of large files. <code>coalesce(n)</code> merges existing partitions without a '
+                               'shuffle — cheaper, but it propagates <em>backwards</em>: the whole preceding stage runs at the reduced parallelism '
+                               '(coalesce(1) = one thread for everything). Small files hurt because every reader pays per-file overhead (open, '
+                               'footer read, S3 request), listing millions of objects is slow, and tiny row groups destroy Parquet compression and '
+                               'pushdown. Target roughly 128&nbsp;MB–1&nbsp;GB per file; in modern lakehouse formats, scheduled compaction '
+                               '(OPTIMIZE) fixes it retroactively.</p>'},
+ 't-mysql-01': {'type': 'mcq',
+                'topic': 'Advanced MySQL',
+                'subtopic': 'composite_indexes',
+                'difficulty': 'Intermediate',
+                'tags': ['composite_index', 'leftmost_prefix', 'index_design'],
+                'title': 'Which query can use the index?',
+                'question': '<p>A table has a composite index <code>INDEX idx (customer_id, order_date, status)</code>. Which query can make '
+                            "<strong>full</strong> use of the index for its filtering (all predicates served by the index's sort order)?</p>",
+                'options': [{'key': 'A', 'text': "WHERE order_date >= '2024-01-01' AND status = 'paid'"},
+                            {'key': 'B', 'text': 'WHERE YEAR(order_date) = 2024 AND customer_id = 42'},
+                            {'key': 'C', 'text': "WHERE status = 'paid'"},
+                            {'key': 'D', 'text': "WHERE customer_id = 42 AND order_date BETWEEN '2024-01-01' AND '2024-03-31'"}],
+                'correct_key': 'D',
+                'option_explanations': {'A': 'Wrong — it skips the leftmost column (customer_id); a B-tree ordered by (customer_id, order_date, '
+                                             "status) can't seek on order_date alone, so this at best scans the whole index.",
+                                        'B': 'Wrong — wrapping order_date in YEAR() makes the predicate non-sargable: the function hides the indexed '
+                                             "value, so even after the customer_id seek the date filter can't use index order (write it as a range "
+                                             'instead).',
+                                        'C': 'Wrong — status is the third column; without the two left columns the index order is useless for it.',
+                                        'D': 'Correct — equality on the leftmost column plus a range on the second column follows the index order '
+                                             'exactly: seek to customer 42, range-scan the date interval.'},
+                'explanation': '<p>A composite B-tree index sorts by column 1, then 2, then 3 — so it supports predicates that constrain a '
+                               '<strong>leftmost prefix</strong>: equality chains followed by at most one range. (customer_id = ?, order_date range) '
+                               'fits perfectly. Two classic traps appear in the distractors: skipping the leading column, and applying a function to '
+                               "an indexed column (non-sargable — rewrite <code>YEAR(d)=2024</code> as <code>d >= '2024-01-01' AND d &lt; "
+                               "'2025-01-01'</code>). Also worth knowing: after a range predicate, later index columns stop helping for filtering "
+                               '(they can still help as covering columns).</p>'},
+ 't-mysql-02': {'type': 'mcq',
+                'topic': 'Advanced MySQL',
+                'subtopic': 'explain_analysis',
+                'difficulty': 'Advanced',
+                'tags': ['explain', 'query_plan', 'access_type'],
+                'title': 'Reading an EXPLAIN',
+                'question': '<p><code>EXPLAIN</code> on a slow query over a 200-million-row orders table shows:</p><pre>type: ALL\n'
+                            'rows: 198,442,110\n'
+                            'key: NULL\n'
+                            'Extra: Using where; Using filesort</pre><p>The query is <code>SELECT * FROM orders WHERE customer_id = 42 ORDER BY '
+                            'order_date DESC LIMIT 20</code>. What is the correct reading and fix?</p>',
+                'options': [{'key': 'A', 'text': '"Using filesort" means MySQL is sorting on disk; increase sort_buffer_size to fix the query'},
+                            {'key': 'B',
+                             'text': 'The LIMIT 20 makes this query cheap regardless of plan; the slowness must come from lock contention'},
+                            {'key': 'C', 'text': 'type: ALL means the table is corrupted; run OPTIMIZE TABLE to rebuild it'},
+                            {'key': 'D',
+                             'text': 'The optimizer chose a full table scan because no usable index exists; add INDEX (customer_id, order_date) so '
+                                     'filtering and ordering both come from the index'}],
+                'correct_key': 'D',
+                'option_explanations': {'A': 'Wrong — filesort just means an explicit sort operation (not necessarily on disk); tuning sort buffers '
+                                             'polishes a fundamentally wrong plan that still scans 200M rows.',
+                                        'B': 'Wrong — LIMIT bounds the rows *returned*, but with no index MySQL must still find and sort all '
+                                             'matching rows before taking the top 20.',
+                                        'C': 'Wrong — type: ALL is a plan choice (full scan), not corruption; OPTIMIZE TABLE rebuilds storage, it '
+                                             "doesn't create the missing index.",
+                                        'D': 'Correct — type: ALL + key: NULL = full scan of ~200M rows, then an explicit sort just to return 20. '
+                                             'With (customer_id, order_date), MySQL seeks to customer 42 and reads 20 rows already in date order: no '
+                                             'scan, no filesort.'},
+                'explanation': '<p>The EXPLAIN triad to read first: <code>type</code> (access method: ALL = full scan; range/ref/eq_ref = '
+                               'index-assisted), <code>rows</code> (estimated rows examined), <code>Extra</code> (Using filesort = explicit sort; '
+                               'Using temporary = intermediate table; Using index = covering). A query that examines 200M rows to return 20 is a '
+                               'plan problem, never a buffer-tuning problem. The composite index (customer_id, order_date) serves both the equality '
+                               'filter and the ORDER BY direction, converting the plan to a short ordered range read — the single most common '
+                               'index-design win in OLTP MySQL.</p>'},
+ 't-mysql-03': {'type': 'mcq',
+                'topic': 'Advanced MySQL',
+                'subtopic': 'covering_index',
+                'difficulty': 'Advanced',
+                'tags': ['covering_index', 'using_index', 'clustered_index'],
+                'title': 'Why did adding two columns to the index double its speed?',
+                'question': '<p>The query <code>SELECT status, total FROM orders WHERE customer_id = 42</code> used <code>INDEX (customer_id)</code> '
+                            'and was already fast — but a colleague changed the index to <code>(customer_id, status, total)</code> and it got '
+                            'several times faster, with <code>Extra: Using index</code> appearing in EXPLAIN. Why?</p>',
+                'options': [{'key': 'A', 'text': 'MySQL can now use three indexes in parallel instead of one'},
+                            {'key': 'B', 'text': 'Statistics on the new index are fresher, so the optimizer picks a better join order'},
+                            {'key': 'C', 'text': 'The wider index compresses better, so fewer bytes are read from disk'},
+                            {'key': 'D',
+                             'text': 'The index now covers the query: all selected columns live in the index, eliminating the per-row lookup back to '
+                                     'the clustered table'}],
+                'correct_key': 'D',
+                'option_explanations': {'A': 'Wrong — it is one composite index, and MySQL generally uses a single index per table access here.',
+                                        'B': "Wrong — there is no join, and freshness of statistics doesn't change the fundamental lookup-per-row "
+                                             'cost.',
+                                        'C': 'Wrong — a wider index is more bytes, not fewer; the win is not compression but avoiding secondary '
+                                             'lookups.',
+                                        'D': 'Correct — with only (customer_id), every matching index entry requires a bounce to the clustered index '
+                                             '(by primary key) to fetch status and total. When the index contains every referenced column, the '
+                                             "storage engine answers from the index alone — 'Using index' is exactly this covering read."},
+                'explanation': '<p>In InnoDB the table <em>is</em> the clustered index (rows stored in primary-key order), and every secondary index '
+                               'entry stores the primary key as its row pointer. A non-covering read therefore costs: secondary index seek + one '
+                               'clustered-index lookup <em>per matching row</em> — random IO that dominates for customers with many orders. A '
+                               '<strong>covering index</strong> contains every column the query touches, so the engine never leaves the index; '
+                               'EXPLAIN advertises it as <code>Using index</code>. The trade-off: wider indexes cost write amplification and memory, '
+                               'so cover deliberately for hot queries rather than reflexively.</p>'},
+ 't-mysql-04': {'type': 'mcq',
+                'topic': 'Advanced MySQL',
+                'subtopic': 'indexing_tradeoffs',
+                'difficulty': 'Intermediate',
+                'tags': ['index_overhead', 'write_amplification', 'selectivity'],
+                'title': 'When an index makes things worse',
+                'question': '<p>In which situation is adding an index most likely a net <strong>loss</strong>?</p>',
+                'options': [{'key': 'A', 'text': 'A foreign-key column used in frequent joins'},
+                            {'key': 'B',
+                             'text': 'A column used in the WHERE clause of a dashboard query running 1,000× a day on a rarely-updated table'},
+                            {'key': 'C',
+                             'text': "A low-cardinality status flag ('active'/'deleted', 99% 'active') on a write-heavy table, queried occasionally "
+                                     'for the 99% value'},
+                            {'key': 'D', 'text': 'A high-cardinality email column used for exact-match login lookups'}],
+                'correct_key': 'C',
+                'option_explanations': {'A': 'Wrong — join keys are classic index territory; without one, every join probe is a scan.',
+                                        'B': 'Wrong — heavy read use plus rare writes is the ideal index case; maintenance cost is negligible.',
+                                        'C': 'Correct — filtering for the 99% value means the index barely narrows anything (the optimizer will '
+                                             'likely ignore it and scan), while every write to a hot table pays index maintenance forever. Cost '
+                                             'without benefit.',
+                                        'D': 'Wrong — unique-ish exact matches are the best possible index workload: one seek per lookup.'},
+                'explanation': '<p>Every index is a bet: read savings must outweigh permanent write amplification (each INSERT/UPDATE/DELETE '
+                               'maintains every index), storage, and buffer-pool competition. The bet fails when <strong>selectivity</strong> is '
+                               "poor — an index that matches most of the table doesn't beat a scan, and the optimizer knows it (rule of thumb: an "
+                               'index earning its keep should narrow to a small fraction of rows for the queries that use it). Nuance worth '
+                               'volunteering in interviews: a low-cardinality index CAN pay off when queries target the <em>rare</em> value '
+                               "('deleted', 1%) — selectivity is a property of the predicate, not just the column.</p>"},
+ 't-mysql-05': {'type': 'short_answer',
+                'topic': 'Advanced MySQL',
+                'subtopic': 'pagination',
+                'difficulty': 'Advanced',
+                'tags': ['offset_pagination', 'keyset_pagination', 'limit_offset'],
+                'title': 'Why deep OFFSET pagination collapses',
+                'question': '<p>An API paginates with <code>ORDER BY created_at DESC LIMIT 20 OFFSET ?</code> and an index on created_at exists. '
+                            'Page 1 is instant; page 50,000 takes 30 seconds. Explain (a) why deep offsets are slow despite the index, (b) design '
+                            "keyset (seek/cursor) pagination for this API including how you'd handle ties in created_at, and (c) one product/API "
+                            'implication of switching.</p>',
+                'rubric': {'1': 'Blames the index or suggests caching/more hardware; does not know that OFFSET walks and discards rows.',
+                           '3': 'Explains OFFSET N scans and discards N index entries (cost grows linearly with page depth) and proposes WHERE '
+                                'created_at < :last_seen ORDER BY created_at DESC LIMIT 20 as the seek method; may gloss over tie-handling.',
+                           '5': 'All of 3, plus: ties handled with a compound cursor — WHERE (created_at, id) < (:last_created_at, :last_id) ordered '
+                                'by both, with a matching composite index; notes each secondary-index row also drags a clustered lookup if not '
+                                'covering; (c) articulates a real implication — no random page jumps, cursors must be opaque/stable tokens, deleted '
+                                "rows can't break the cursor, consistent ordering requires the tiebreaker to be unique."},
+                'follow_up_probes': ['Why must the tiebreaker column be unique for the cursor to be correct?',
+                                     'What index exactly supports the compound-seek WHERE clause?',
+                                     "How would you support 'jump to page 500' if the business insists?"],
+                'explanation': '<p>OFFSET is not a seek: the engine walks the index in order and <em>discards</em> the first N entries — page depth '
+                               'is linear cost, and with a non-covering index each discarded entry may also pay a clustered-index lookup. '
+                               "<strong>Keyset pagination</strong> replaces the discard with a seek: remember the last row's (created_at, id) and "
+                               'fetch <code>WHERE (created_at, id) &lt; (:c, :i) ORDER BY created_at DESC, id DESC LIMIT 20</code> — constant time '
+                               'at any depth with an index on (created_at, id). The id tiebreaker makes the sort total, so rows sharing a timestamp '
+                               'are never skipped or repeated across pages. The product trade-off: cursors only move relative to a known position '
+                               "(no 'page 500' jump), so APIs expose next/prev tokens — which is exactly what most large-scale APIs (and infinite "
+                               'scroll) do.</p>'},
+ 't-mysql-06': {'type': 'short_answer',
+                'topic': 'Advanced MySQL',
+                'subtopic': 'index_design_workload',
+                'difficulty': 'Advanced',
+                'tags': ['index_design', 'composite_index', 'workload_analysis', 'explain'],
+                'title': 'Design indexes for a workload',
+                'question': '<p>A 300M-row <code>events</code> table (id PK, account_id, event_type, created_at, payload JSON) serves three hot '
+                            'queries: (1) latest 50 events for an account; (2) count of events per event_type for an account over a date range; (3) '
+                            'rare admin scans of everything in a date range. Currently only the PK exists. Propose an index set, justify column '
+                            'order in each, and state which query you would deliberately leave slow and why.</p>',
+                'rubric': {'1': 'Proposes one index per column (account_id), (event_type), (created_at) with no composite reasoning or workload '
+                                'prioritization.',
+                           '3': 'Proposes (account_id, created_at) for query 1 with correct equality-then-range ordering, and something workable for '
+                                'query 2 — e.g. (account_id, event_type, created_at) — with basic justification; recognizes query 3 as rare and '
+                                'possibly not worth an index.',
+                           '5': 'All of 3, plus: explains why (account_id, created_at) serves the ORDER BY DESC LIMIT without filesort; weighs '
+                                "whether (account_id, event_type, created_at) also covers query 1's needs (it doesn't serve date-ordered scans "
+                                'across all types, so both indexes may be justified — or query 2 rewritten); explicitly costs each index in write '
+                                'amplification on a high-insert table; leaves query 3 to off-peak scans or a replica/warehouse rather than indexing '
+                                '300M rows by created_at alone for a rare admin need; mentions verifying with EXPLAIN and considering covering '
+                                "variants only if the payload isn't selected."},
+                'follow_up_probes': ["Why can't (account_id, event_type, created_at) serve query 1's ORDER BY created_at efficiently?",
+                                     'Insert rate doubles — which of your indexes do you reconsider first?',
+                                     'When would a generated column + index beat indexing into the JSON payload?'],
+                'explanation': '<p>Workload-first index design: (1) <code>(account_id, created_at)</code> — equality on account then range/order on '
+                               'time lets MySQL read the newest 50 in index order, no filesort; (2) <code>(account_id, event_type, '
+                               'created_at)</code> — equality, equality, range matches the grouping/filter shape (or run the count from the first '
+                               'index accepting a wider scan-and-filter — a defensible economy). Column order rule: equality columns first, then the '
+                               "range/order column; a range column 'uses up' the index. Query 3 is deliberately left slow: indexing (created_at) "
+                               'alone on a 300M-row hot-insert table buys a rare admin job at the price of permanent write amplification — run it '
+                               'off-hours, on a replica, or in the warehouse. Every proposal should end with EXPLAIN verification; optimizers, not '
+                               'intentions, decide what gets used.</p>'},
+ 't-snow-01': {'type': 'mcq',
+               'topic': 'Snowflake',
+               'subtopic': 'micro_partitions',
+               'difficulty': 'Intermediate',
+               'tags': ['micro_partition', 'pruning', 'metadata'],
+               'title': 'What makes a Snowflake filter fast?',
+               'question': "<p>A query on a 10&nbsp;TB table — <code>WHERE order_date = '2024-06-01'</code> — scans only a small fraction of the "
+                           'table, even though nobody created any index. What mechanism makes this possible?</p>',
+               'options': [{'key': 'A', 'text': "The result cache stores the answer from a previous user's identical query"},
+                           {'key': 'B', 'text': 'Snowflake automatically builds B-tree indexes on date columns'},
+                           {'key': 'C', 'text': "The warehouse's SSD cache holds the full table in memory"},
+                           {'key': 'D',
+                            'text': 'Each immutable micro-partition stores min/max metadata per column; partitions whose ranges exclude the filter '
+                                    'value are pruned without being read'}],
+               'correct_key': 'D',
+               'option_explanations': {'A': 'Wrong — the result cache would return instantly with zero scan; the question describes a real but '
+                                            'reduced scan.',
+                                       'B': 'Wrong — Snowflake has no user-facing B-tree indexes on standard tables; pruning is metadata-driven.',
+                                       'C': "Wrong — the local SSD cache accelerates re-reads of recently touched partitions; it doesn't decide "
+                                            'which partitions are relevant.',
+                                       'D': 'Correct — data lands in ~50–500MB (compressed ≈16MB) immutable micro-partitions, each carrying '
+                                            'per-column min/max, distinct counts, and null counts. The optimizer compares the filter to that '
+                                            'metadata and skips partitions that cannot contain matches.'},
+               'explanation': "<p><strong>Micro-partitions</strong> are Snowflake's storage unit: immutable, columnar, automatically created in load "
+                              'order, each with rich per-column metadata (min/max, nulls, distinct estimates). <strong>Pruning</strong> compares '
+                              'query predicates against this metadata to skip irrelevant partitions entirely — the columnar analog of index-based '
+                              'access. The catch that motivates clustering: pruning quality depends on whether values are physically clustered. A '
+                              'date filter prunes beautifully on an append-in-time-order table; a filter on a scattered column (say customer_id '
+                              'spread across all partitions) prunes almost nothing — which is where clustering keys enter.</p>'},
+ 't-snow-02': {'type': 'mcq',
+               'topic': 'Snowflake',
+               'subtopic': 'caching',
+               'difficulty': 'Intermediate',
+               'tags': ['result_cache', 'warehouse_cache', 'metadata_cache'],
+               'title': 'Which cache answered the query?',
+               'question': '<p>An analyst runs a dashboard query at 9:00. At 9:20 — after the warehouse auto-suspended at 9:10 — a different user '
+                           'runs the byte-identical query and gets the answer in ~50&nbsp;ms without the warehouse resuming. Which mechanism served '
+                           'it?</p>',
+               'options': [{'key': 'A', 'text': "The warehouse's local SSD cache"},
+                           {'key': 'B', 'text': 'Query acceleration service replaying the previous execution plan'},
+                           {'key': 'C', 'text': 'Metadata cache answering from micro-partition statistics'},
+                           {'key': 'D', 'text': 'The global result cache, which stores query results for 24h and needs no running warehouse'}],
+               'correct_key': 'D',
+               'option_explanations': {'A': "Wrong — the local cache lives on the warehouse's compute nodes and evaporates when the warehouse "
+                                            'suspends; it also requires a running warehouse to serve anything.',
+                                       'B': "Wrong — query acceleration offloads scan work of running queries; it doesn't replay results.",
+                                       'C': 'Wrong — metadata answers only special forms (COUNT(*), MIN/MAX on partition metadata), not arbitrary '
+                                            'dashboard queries.',
+                                       'D': 'Correct — the result cache is global (cross-user, cross-warehouse), keyed on query text + data version; '
+                                            'hits return the stored result without compute, which is why no warehouse resume happened.'},
+               'explanation': "<p>Snowflake's three cache layers, in the order you should check them: (1) <strong>result cache</strong> — global "
+                              'service-layer store of complete results for 24h (extended on reuse), hit only when query text is identical and '
+                              'underlying data unchanged; costs zero compute. (2) <strong>local disk (warehouse) cache</strong> — raw '
+                              "micro-partitions on the compute cluster's SSDs; survives between queries but dies on suspend, which is the "
+                              'auto-suspend trade-off. (3) <strong>metadata cache</strong> — serves partition statistics; answers things like '
+                              'COUNT(*) without any scan. Interview relevance: explaining why the same dashboard is instant, slow, or medium at '
+                              'different times of day is a caching-layer question in disguise.</p>'},
+ 't-snow-03': {'type': 'mcq',
+               'topic': 'Snowflake',
+               'subtopic': 'clustering',
+               'difficulty': 'Advanced',
+               'tags': ['clustering_key', 'auto_clustering', 'pruning', 'cost'],
+               'title': 'Should this table get a clustering key?',
+               'question': '<p>Which table is the <strong>strongest</strong> candidate for a clustering key?</p>',
+               'options': [{'key': 'A', 'text': 'A 500 MB lookup table joined by exact key'},
+                           {'key': 'B',
+                            'text': 'A 50 TB event table, loaded continuously in arrival order, where 90% of queries filter on tenant_id — values '
+                                    'arriving interleaved across all tenants'},
+                           {'key': 'C', 'text': 'A 20 TB append-only log queried almost exclusively by recent load date'},
+                           {'key': 'D', 'text': 'A 5 TB table whose queries always aggregate the full table without filters'}],
+               'correct_key': 'B',
+               'option_explanations': {'A': 'Wrong — at 500 MB the table is a handful of micro-partitions; pruning has nothing meaningful to skip '
+                                            'and clustering spend is wasted.',
+                                       'B': 'Correct — huge table + dominant selective filter + natural order (arrival time) uncorrelated with the '
+                                            'filter column = terrible pruning today, dramatic improvement if physically reorganized by tenant_id. '
+                                            'This is the textbook clustering case.',
+                                       'C': 'Wrong — data loaded in time order is already naturally clustered by date; date filters prune well with '
+                                            'no clustering spend.',
+                                       'D': "Wrong — full-table aggregations read everything regardless of layout; clustering can't prune an "
+                                            'unfiltered scan.'},
+               'explanation': '<p>A clustering key tells Snowflake to (continuously, via auto-clustering) reorganize micro-partitions so a chosen '
+                              "column's values are physically co-located, restoring pruning for filters that the natural load order doesn't serve. "
+                              'The economics: clustering pays when the table is large (many partitions to skip), queries filter selectively on the '
+                              "clustered column, and natural order doesn't already match — and it <em>costs</em> continuously (auto-clustering "
+                              'credits on every DML). Check SYSTEM$CLUSTERING_INFORMATION for overlap depth before and after. Small tables, '
+                              'naturally-ordered access, and unfiltered scans are all cases where clustering is spend without benefit.</p>'},
+ 't-snow-04': {'type': 'mcq',
+               'topic': 'Snowflake',
+               'subtopic': 'warehouse_sizing',
+               'difficulty': 'Intermediate',
+               'tags': ['warehouse_sizing', 'scale_up', 'scale_out', 'multi_cluster'],
+               'title': 'Scale up or scale out?',
+               'question': '<p>At 9am, 40 analysts hit the BI warehouse; queries that run in 4 seconds off-peak queue for minutes. Each query is '
+                           'small. What is the right lever?</p>',
+               'options': [{'key': 'A', 'text': 'Enable multi-cluster (scale out) so additional clusters absorb the concurrent queries'},
+                           {'key': 'B', 'text': 'Enable the query acceleration service to offload the scans'},
+                           {'key': 'C', 'text': 'Increase the warehouse size from M to XL so queries run faster'},
+                           {'key': 'D', 'text': 'Raise the statement timeout so queries stop failing in the queue'}],
+               'correct_key': 'A',
+               'option_explanations': {'A': 'Correct — queueing under bursts of small queries is exactly what multi-cluster warehouses solve: '
+                                            'min/max cluster counts spin clusters up during the 9am burst and back down after, clearing the queue '
+                                            'without over-paying off-peak.',
+                                       'B': 'Wrong — query acceleration helps individual scan-heavy outlier queries, not a concurrency bottleneck of '
+                                            'small fast queries.',
+                                       'C': 'Wrong — sizing up speeds up individual large queries (more compute per query), but these queries are '
+                                            'already fast; the pain is queueing, i.e. concurrency, and one bigger cluster still processes a limited '
+                                            'number of concurrent queries.',
+                                       'D': 'Wrong — a longer timeout hides the symptom; analysts still wait.'},
+               'explanation': '<p>The sizing rule: <strong>scale up</strong> (bigger warehouse) when individual queries are too slow — more nodes '
+                              'work on each query, helping large scans, joins, and spilling. <strong>Scale out</strong> (multi-cluster) when queries '
+                              'are fine but <em>queue</em> — concurrency demands more clusters, not bigger ones. Diagnose from QUERY_HISTORY: high '
+                              'queued_provisioning/queued_overload time → scale out; high execution time with remote spilling → scale up. '
+                              'Auto-suspend/auto-resume plus multi-cluster min/max is what makes the burst pattern affordable — pay for the 9am peak '
+                              'only while it exists.</p>'},
+ 't-snow-05': {'type': 'mcq',
+               'topic': 'Snowflake',
+               'subtopic': 'zero_copy_cloning',
+               'difficulty': 'Advanced',
+               'tags': ['zero_copy_clone', 'time_travel', 'storage_billing'],
+               'title': 'What does a zero-copy clone actually copy?',
+               'question': '<p>You run <code>CREATE TABLE dev.orders CLONE prod.orders</code> on a 100&nbsp;TB table. It completes in seconds. Two '
+                           'weeks later, dev has updated 1% of rows and prod has continued loading normally. What is true about storage?</p>',
+               'options': [{'key': 'A',
+                            'text': 'The clone was metadata-only at creation, and storage now grows only by the micro-partitions either side has '
+                                    'changed or added since the clone point'},
+                           {'key': 'B', 'text': 'The clone shares storage until any single write, at which point the full 100 TB is copied'},
+                           {'key': 'C', 'text': "The clone consumed 100 TB at creation; that's why cloning needs a large warehouse"},
+                           {'key': 'D', 'text': 'The clone is a view over prod, so dev queries always see current prod data'}],
+               'correct_key': 'A',
+               'option_explanations': {'A': "Correct — both tables reference the same partitions initially; because partitions are immutable, dev's "
+                                            "1% of updates writes new partitions charged to dev, prod's new loads are charged to prod, and the "
+                                            'shared original partitions are stored once.',
+                                       'B': 'Wrong — copy-on-write happens at micro-partition granularity, never as a full-table copy.',
+                                       'C': "Wrong — cloning copies no data at all (it's a metadata operation referencing existing immutable "
+                                            'micro-partitions) and needs no warehouse for the data itself.',
+                                       'D': 'Wrong — a clone is an independent table frozen at the clone point; it does not track later prod '
+                                            'changes.'},
+               'explanation': '<p>Zero-copy cloning falls out of the immutable micro-partition architecture: a clone is a new metadata catalog '
+                              'pointing at the same partitions, so creation is instant and initially free of extra storage. Subsequent writes on '
+                              'either side create <em>new</em> partitions (copy-on-write at partition granularity), and only that divergence bills '
+                              'additionally. The same machinery powers Time Travel (old partitions retained for the retention window) — which is '
+                              "also the cost caveat: high-churn tables keep replaced partitions alive for clones/time travel, so 'free' clones on "
+                              'heavily rewritten tables quietly accumulate storage. Killer use cases: instant dev/test environments, pre-migration '
+                              'backups, reproducible experiments.</p>'},
+ 't-snow-06': {'type': 'short_answer',
+               'topic': 'Snowflake',
+               'subtopic': 'time_travel',
+               'difficulty': 'Intermediate',
+               'tags': ['time_travel', 'retention', 'undrop', 'fail_safe'],
+               'title': 'Time travel: mechanism, uses, and cost',
+               'question': '<p>Explain how Snowflake Time Travel works under the hood, give two concrete operational uses, and explain what it costs '
+                           "and how you'd control that cost on a high-churn table.</p>",
+               'rubric': {'1': "Knows the AT/BEFORE syntax exists or that you can 'restore data' but has no mechanism (immutability/retention) and "
+                               'no cost story.',
+                          '3': 'Ties time travel to immutable micro-partitions retained for a retention window (default 1 day, up to 90 on '
+                               'Enterprise); gives real uses (query pre-mistake state, restore/UNDROP a dropped table, compare before/after a bad '
+                               'load); knows retained partitions bill as storage.',
+                          '5': 'All of 3, plus: cost is proportional to churn (every UPDATE/DELETE/MERGE keeps superseded partitions alive for the '
+                               'whole window), so high-churn tables with long retention quietly multiply storage; controls — per-table '
+                               'DATA_RETENTION_TIME_IN_DAYS, transient tables (no fail-safe, minimal retention) for staging/scratch, and awareness '
+                               "of fail-safe's extra 7 non-configurable days on permanent tables; mentions recovering via CLONE ... AT to preserve "
+                               'the good state rather than querying it repeatedly.'},
+               'follow_up_probes': ['Why do transient tables exist, and where would you use them in an ELT pipeline?',
+                                    'A colleague sets 90-day retention on a table MERGEd hourly — what happens to storage?',
+                                    'How does UNDROP work mechanically?'],
+               'explanation': '<p>Because micro-partitions are immutable, DML never overwrites: it writes new partitions and marks old ones '
+                              'superseded. <strong>Time Travel</strong> is simply the catalog retaining superseded partitions for the retention '
+                              'window, letting <code>AT (TIMESTAMP => …)</code>/<code>BEFORE (STATEMENT => …)</code> reconstruct any historical '
+                              'version, and <code>UNDROP</code> restore whole objects by reviving their metadata. Uses: instant recovery from bad '
+                              "loads/deletes (typically CLONE the good state first), auditing what changed, reproducing yesterday's report. Cost is "
+                              'churn-driven: an hourly-MERGE table with 90-day retention retains ~2,000 generations of rewritten partitions. '
+                              'Controls: short retention on hot staging tables, <em>transient</em> tables for rebuildable data (no 7-day fail-safe '
+                              'on top), long retention only where recovery value justifies it.</p>'},
+ 't-snow-07': {'type': 'short_answer',
+               'topic': 'Snowflake',
+               'subtopic': 'cost_management',
+               'difficulty': 'Advanced',
+               'tags': ['cost_drivers', 'credits', 'auto_suspend', 'workload_isolation'],
+               'title': 'Cutting a Snowflake bill in half',
+               'question': '<p>You inherit a Snowflake account whose monthly bill doubled in a quarter. Describe your investigation: what are the '
+                           "main cost drivers in Snowflake's model, which account views/metrics you'd inspect, and the five changes most likely to "
+                           'reduce spend — ranked by effort-to-impact, with the trade-off each one carries.</p>',
+               'rubric': {'1': "Generic 'optimize queries / use smaller warehouse' with no grasp of the credit model (compute billed per-second "
+                               'while running, storage separate) or of where to look.',
+                          '3': 'Knows compute credits dominate (warehouse size × running time), storage and serverless (auto-clustering, snowpipe, '
+                               'materialized-view maintenance) are separate lines; would inspect WAREHOUSE_METERING_HISTORY / QUERY_HISTORY; '
+                               'proposes several sane fixes: auto-suspend tightening, right-sizing, killing zombie warehouses, deduplicating '
+                               'scheduled jobs.',
+                          '5': 'All of 3, plus a ranked, trade-off-aware plan, e.g.: (1) auto-suspend 60s + auto-resume on all warehouses '
+                               "(trade-off: cold local cache after suspend); (2) separate/right-size workloads — don't run tiny scheduled jobs on an "
+                               "XL, don't share BI and ELT (isolation vs consolidation utilization); (3) find spilling/oversized queries via "
+                               'QUERY_HISTORY bytes_spilled and either fix SQL or size up briefly (bigger-but-shorter can be net cheaper); (4) audit '
+                               'serverless line items — runaway auto-clustering on a churn-heavy clustered table is a classic silent doubler; (5) '
+                               'storage: retention/transient policy for staging, drop unused clones. Mentions resource monitors/budgets as '
+                               'guardrails.'},
+               'follow_up_probes': ['Why can a larger warehouse sometimes be cheaper for the same job?',
+                                    "Auto-clustering credits tripled last month — what's your hypothesis and check?",
+                                    'What breaks if you set auto-suspend to 10 seconds on a BI warehouse?'],
+               'explanation': '<p>Snowflake spend = <strong>compute credits</strong> (warehouse size × seconds running — running, not busy), + '
+                              '<strong>serverless</strong> (auto-clustering, Snowpipe, MV maintenance, search optimization), + '
+                              '<strong>storage</strong> (including time-travel/fail-safe retention). Investigation: '
+                              'ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY for where credits go, QUERY_HISTORY for spilling/queueing/zombie patterns, '
+                              'serverless metering views for the silent lines. The classic wins: aggressive auto-suspend (cache-warmth trade-off), '
+                              'workload isolation with honest sizing, fixing the handful of queries that spill remotely (or running them on a larger '
+                              'warehouse for a shorter time — per-second billing makes bigger-but-faster often net cheaper), taming auto-clustering '
+                              'on churn-heavy tables, and retention hygiene. Resource monitors turn cost from a monthly surprise into an enforced '
+                              'budget.</p>'},
+ 't-snow-08': {'type': 'short_answer',
+               'topic': 'Snowflake',
+               'subtopic': 'query_profiling',
+               'difficulty': 'Advanced',
+               'tags': ['query_profile', 'spilling', 'exploding_join', 'pruning'],
+               'title': 'Reading a bad query profile',
+               'question': '<p>A query that should take seconds runs 20 minutes. Its Query Profile shows: a Join node emitting 40&nbsp;billion rows '
+                           "from inputs of 200M and 300M rows; 'Bytes spilled to remote storage: 1.2 TB'; and a TableScan reading 100% of a "
+                           "30&nbsp;TB table's partitions despite a date filter. Interpret each signal and give the fix for each.</p>",
+               'rubric': {'1': "Reads the numbers back without interpretation, or proposes 'bigger warehouse' as the fix for all three.",
+                          '3': 'Interprets: 40B rows out ≫ inputs = exploding (many-to-many / wrong-key) join — fix the join condition or dedupe '
+                               'keys first; remote spilling = memory exhaustion cascading past local disk — reduce data earlier or bigger warehouse; '
+                               "0% pruning = filter can't prune (function on the column, mismatched type, or unclustered column) — make the "
+                               'predicate sargable or cluster.',
+                          '5': 'All of 3 with precision: names duplicate join keys / missing grain check as the exploding-join root cause and '
+                               "'aggregate to the join grain first' as the fix; orders the fixes causally (the exploding join is likely what causes "
+                               'the spilling — fix it first and the spill may vanish); for pruning names concrete culprits (WHERE '
+                               'to_char(date_col)=…, casting, OR-chains) and validates with partitions_scanned/partitions_total; notes bigger '
+                               'warehouse is the last resort after semantics are fixed.'},
+               'follow_up_probes': ['How do you check the grain of each side before a join?',
+                                    'Local vs remote spill — why is remote so much worse?',
+                                    "The date filter is sargable but still doesn't prune — what do you check next?"],
+               'explanation': '<p>Three profile signals, three diagnoses. (1) <strong>Join emitting far more rows than either input</strong> = row '
+                              'explosion: duplicate keys on both sides (violated grain) or an under-specified join condition — fix by '
+                              'deduplicating/aggregating to the intended grain before joining; this is a semantics bug, not a tuning problem. (2) '
+                              '<strong>Remote spilling</strong>: operator state overflowed memory and local SSD into object storage — orders of '
+                              'magnitude slower; usually a <em>consequence</em> of the explosion, so fix causally first, then consider a larger '
+                              "warehouse. (3) <strong>No pruning despite a filter</strong>: predicate isn't metadata-comparable (function-wrapped "
+                              "column, type cast) or the column simply isn't clustered with the load order — rewrite the predicate sargably, then "
+                              'evaluate a clustering key. Fix order matters: semantic bugs → data reduction → hardware.</p>'},
+ 't-dbt-01': {'type': 'mcq',
+              'topic': 'DBT',
+              'subtopic': 'materializations',
+              'difficulty': 'Intermediate',
+              'tags': ['materialization', 'view', 'table', 'incremental', 'ephemeral'],
+              'title': 'Pick the materialization',
+              'question': "<p>A dbt model aggregates a 5&nbsp;billion-row event table into daily per-customer metrics. It's queried by dashboards "
+                          'hundreds of times a day, and each day only new events arrive (history is immutable). Which materialization fits best?</p>',
+              'options': [{'key': 'A', 'text': 'incremental — persist results and process only new events each run'},
+                          {'key': 'B', 'text': 'table — rebuilt fully on every run, simple and predictable'},
+                          {'key': 'C', 'text': 'view — always fresh and costs nothing to build'},
+                          {'key': 'D', 'text': 'ephemeral — inlined as a CTE into downstream models'}],
+              'correct_key': 'A',
+              'option_explanations': {'A': 'Correct — persisted like a table for cheap reads, but each run processes only new events (filtered via '
+                                           'is_incremental()); immutable history + append-only arrivals is the textbook incremental case.',
+                                      'B': 'Wrong — it works, but rebuilds all history daily when only one day changed: pure repeated compute on an '
+                                           'immutable past.',
+                                      'C': "Wrong — a view re-aggregates 5B rows on every one of hundreds of dashboard hits; 'costs nothing to "
+                                           "build' means it costs everything to read.",
+                                      'D': 'Wrong — ephemeral just inlines SQL into consumers; every dashboard-facing query would re-run the '
+                                           'aggregation, worse than a view for reuse.'},
+              'explanation': '<p>The materialization decision is a compute-vs-freshness-vs-storage trade: <strong>view</strong> = cheap to build, '
+                             'pay per read (fine for light transforms); <strong>table</strong> = pay full rebuild per run, cheap reads (fine when '
+                             'full rebuild is cheap or logic is non-incrementalizable); <strong>incremental</strong> = cheap runs + cheap reads at '
+                             'the cost of merge logic and edge cases (late data, schema change) — earns its keep exactly when input is large, '
+                             'history stable, and reads frequent; <strong>ephemeral</strong> = no object at all, for small reusable intermediate '
+                             'logic. Heavy aggregation + append-only source + hot dashboards points squarely at incremental.</p>'},
+ 't-dbt-02': {'type': 'mcq',
+              'topic': 'DBT',
+              'subtopic': 'incremental_strategies',
+              'difficulty': 'Advanced',
+              'tags': ['incremental', 'merge', 'delete_insert', 'append', 'unique_key'],
+              'title': 'Choosing an incremental strategy',
+              'question': '<p>An incremental model builds order-level facts. Source rows can be <em>updated</em> upstream for up to 7 days after '
+                          'creation (status changes), and the model must never contain duplicate order_ids. Which configuration is correct?</p>',
+              'options': [{'key': 'A',
+                           'text': "strategy='merge' with unique_key='order_id', selecting source rows updated in a trailing lookback window"},
+                          {'key': 'B', 'text': "Full-refresh the model daily, since incremental models can't handle updates"},
+                          {'key': 'C', 'text': "strategy='append', filtering on created_at > max(created_at)"},
+                          {'key': 'D', 'text': "strategy='merge' without a unique_key, since merge deduplicates automatically"}],
+              'correct_key': 'A',
+              'option_explanations': {'A': 'Correct — merge matches incoming rows to existing ones on order_id (update) and inserts the rest; the '
+                                           'lookback window (e.g. updated_at >= dateadd(day,-7, max in target)) re-captures rows that changed after '
+                                           'first load.',
+                                      'B': 'Wrong — a daily full refresh of a fact table works but abandons incrementality entirely; the premise '
+                                           "('can't handle updates') is false — merge exists precisely for updates.",
+                                      'C': 'Wrong — append can only add rows; an updated order would either be missed (created_at unchanged, outside '
+                                           'the filter) or inserted again as a duplicate.',
+                                      'D': "Wrong — without a unique_key, dbt's merge degenerates to inserts; nothing matches, duplicates "
+                                           'accumulate.'},
+              'explanation': '<p>Strategy selection follows the mutation pattern of the source: <strong>append</strong> for truly immutable streams '
+                             '(cheapest — no matching); <strong>merge</strong> with a <code>unique_key</code> when rows mutate — updates match, new '
+                             "rows insert; <strong>delete+insert</strong> when it's cheaper to replace whole recent partitions than match row-by-row "
+                             '(also the workaround where MERGE is weak). The second half of the answer is the <strong>lookback window</strong>: '
+                             'filtering only on "newer than my max timestamp" misses rows updated after their first load, so mutable sources need '
+                             'the incremental filter to reach back over the mutation horizon (here 7 days). Merge + unique_key + lookback is the '
+                             'standard recipe for late-mutating facts.</p>'},
+ 't-dbt-03': {'type': 'mcq',
+              'topic': 'DBT',
+              'subtopic': 'ref_and_sources',
+              'difficulty': 'Intermediate',
+              'tags': ['ref', 'source', 'dag', 'lineage'],
+              'title': 'What does ref() actually buy you?',
+              'question': "<p>A teammate asks why dbt models must use <code>{{ ref('stg_orders') }}</code> instead of just writing "
+                          '<code>analytics.stg_orders</code>, "since it compiles to the same table name anyway." What is the best answer?</p>',
+              'options': [{'key': 'A', 'text': 'ref() is only a naming convention that makes SQL more readable'},
+                          {'key': 'B', 'text': "ref() caches the referenced model's results so downstream models run faster"},
+                          {'key': 'C',
+                           'text': 'ref() builds the dependency DAG (run order, selective builds, lineage) and resolves to the right database/schema '
+                                   'per environment — a hardcoded name breaks both'},
+                          {'key': 'D', 'text': 'ref() is required for dbt tests to find the model'}],
+              'correct_key': 'C',
+              'option_explanations': {'A': 'Wrong — the compiled name is incidental; the DAG edge and environment resolution are the substance.',
+                                      'B': "Wrong — ref() does no caching; it's compile-time name resolution plus graph registration.",
+                                      'C': 'Correct — every ref() is an edge in the dependency graph: dbt derives run order, powers `dbt run '
+                                           '--select stg_orders+`, renders lineage, and — critically — resolves to dev/CI/prod schemas per target. '
+                                           'Hardcoding pins the model to one environment and hides the dependency.',
+                                      'D': "Wrong — tests attach via YAML on the model; they don't depend on how other models reference it."},
+              'explanation': "<p><code>ref()</code> (and <code>source()</code> for raw inputs) is dbt's core mechanism, not sugar: at parse time it "
+                             'registers a DAG edge, which gives dependency-ordered execution, selective rebuilds (<code>--select model+</code>, '
+                             'state:modified in slim CI), documentation lineage, and freshness checks upstream (sources). At compile time it '
+                             'resolves environment-correct fully-qualified names, which is what makes the same code run in a dev schema, a CI '
+                             'schema, and prod without edits. A hardcoded table name silently removes the model from the graph and cross-wires '
+                             'environments — the two worst failure modes in a dbt project.</p>'},
+ 't-dbt-04': {'type': 'mcq',
+              'topic': 'DBT',
+              'subtopic': 'tests',
+              'difficulty': 'Intermediate',
+              'tags': ['generic_tests', 'singular_tests', 'data_quality'],
+              'title': 'Testing a dimension the dbt way',
+              'question': '<p>You want to assert, on <code>dim_customers</code>: customer_id is unique and never null; region is one of four known '
+                          'values; every order in fct_orders points at an existing customer; and one bespoke business rule ("no customer\'s ltv may '
+                          'exceed 50× their first order value"). What is the idiomatic dbt setup?</p>',
+              'options': [{'key': 'A', 'text': 'A post-hook that runs assertions after each build and aborts on failure'},
+                          {'key': 'B', 'text': 'Generic tests for everything, writing a custom generic test for the ltv rule'},
+                          {'key': 'C', 'text': 'Four singular test SQL files, one per assertion'},
+                          {'key': 'D',
+                           'text': 'Generic tests in YAML (unique, not_null, accepted_values, relationships) for the first three; a singular SQL '
+                                   'test for the bespoke rule'}],
+              'correct_key': 'D',
+              'option_explanations': {'A': "Wrong — post-hooks run arbitrary SQL but bypass dbt's test framework: no `dbt test` integration, no "
+                                           'failure storage, no CI selection.',
+                                      'B': 'Defensible only if the ltv rule will be reused across many models — for a single bespoke rule, a custom '
+                                           'generic test is machinery without payoff; the idiomatic default is a singular test.',
+                                      'C': 'Wrong — hand-writing SQL for unique/not_null/accepted_values/relationships re-implements the four '
+                                           'built-in generic tests, with more code to maintain and no YAML-visible schema contract.',
+                                      'D': "Correct — the first three assertions are exactly dbt's built-in generic tests, declared on columns in "
+                                           'YAML; the one-off business rule is what singular tests (a SQL file returning violating rows) are for.'},
+              'explanation': "<p>dbt's testing model: <strong>generic tests</strong> are parameterized assertions applied declaratively in YAML — "
+                             'the built-in four (unique, not_null, accepted_values, relationships) cover key integrity, enums, and referential '
+                             'integrity, i.e. most schema contracts; packages (dbt-utils/expectations) extend them. <strong>Singular tests</strong> '
+                             'are plain SQL files that return violating rows — zero rows passes — perfect for bespoke business logic. Promote a '
+                             'singular test to a custom generic test only when the same assertion pattern recurs with different parameters. Tests '
+                             'run via <code>dbt test</code>/<code>dbt build</code>, gate CI, and can store failures for debugging — which is why '
+                             'ad-hoc hooks are the wrong layer.</p>'},
+ 't-dbt-05': {'type': 'mcq',
+              'topic': 'DBT',
+              'subtopic': 'snapshots',
+              'difficulty': 'Advanced',
+              'tags': ['snapshot', 'scd_type_2', 'timestamp_strategy', 'check_strategy'],
+              'title': 'Snapshots and their strategies',
+              'question': '<p>You must track history of a <code>customers</code> source table (SCD Type 2). The table has a reliable '
+                          "<code>updated_at</code> maintained by the application. A colleague's snapshot uses <code>strategy='check', "
+                          "check_cols='all'</code>. What should you tell them?</p>",
+              'options': [{'key': 'A', 'text': "It's ideal: check='all' is the most thorough and should always be preferred"},
+                          {'key': 'B',
+                           'text': 'It works, but with a reliable updated_at the timestamp strategy is preferable — cheaper (one column comparison) '
+                                   "and it captures a change even when values are rewritten... while check='all' also breaks if volatile/irrelevant "
+                                   'columns churn'},
+                          {'key': 'C', 'text': 'Snapshots are deprecated; use an incremental model with merge instead'},
+                          {'key': 'D', 'text': "It's wrong: check strategy can't produce SCD2 output; only timestamp strategy can"}],
+              'correct_key': 'B',
+              'option_explanations': {'A': "Wrong — 'most thorough' is exactly its weakness: it versions every irrelevant change and pays full-row "
+                                           'comparison on every run.',
+                                      'B': "Correct — timestamp strategy trusts updated_at: one cheap comparison, robust semantics. check='all' "
+                                           'hashes/compares every column: costlier, and any noisy column (last_login_at, sync counters) generates '
+                                           'junk versions that bloat history.',
+                                      'C': 'Wrong — snapshots are the supported dbt SCD2 mechanism; hand-rolling merge logic re-implements them '
+                                           'without the battle-tested edge handling.',
+                                      'D': 'Wrong — both strategies yield SCD2 (dbt_valid_from/dbt_valid_to); they differ in how they *detect* '
+                                           'change, not in the output shape.'},
+              'explanation': '<p>dbt snapshots implement SCD Type 2: on each run they compare source rows to the current snapshot version and '
+                             'close/open rows (dbt_valid_from / dbt_valid_to). Change detection: <strong>timestamp</strong> strategy — "row changed '
+                             'if updated_at advanced" — cheap and correct when the timestamp is trustworthy; <strong>check</strong> strategy — "row '
+                             'changed if any of check_cols differ" — for sources without reliable timestamps, ideally with a curated column list '
+                             "rather than 'all' (volatile columns create version noise; missed columns miss changes). Operational notes that show "
+                             'seniority: snapshot the <em>source</em>, early in the DAG, and run snapshots on a schedule matched to how fast history '
+                             'matters — a snapshot only sees states that exist when it runs.</p>'},
+ 't-dbt-06': {'type': 'short_answer',
+              'topic': 'DBT',
+              'subtopic': 'lineage_and_structure',
+              'difficulty': 'Intermediate',
+              'tags': ['dag', 'staging_marts', 'project_structure', 'docs'],
+              'title': 'Structuring a dbt project',
+              'question': '<p>Describe the conventional layering of a dbt project (sources → staging → intermediate → marts), what each layer is '
+                          'allowed to do, and why this structure matters practically — including how the DAG, testing, and documentation interact '
+                          'with it. What goes wrong in projects that skip straight from raw tables to final reports?</p>',
+              'rubric': {'1': "Lists layer names without responsibilities, or describes dbt as 'SQL files that run in order' with no grasp of why "
+                              'layering exists.',
+                         '3': 'Sources declared + freshness; staging = 1:1 with source tables, rename/cast/clean only; intermediate = reusable '
+                              'business logic; marts = consumer-facing facts/dims; notes that ref() builds the DAG across layers and tests '
+                              'concentrate at boundaries (sources/staging keys, mart contracts).',
+                         '5': 'All of 3, plus concrete failure modes of skipping layers: duplicated cleaning logic drifting apart across reports, '
+                              'silent source-schema breakage with no staging buffer, untestable monolith SQL, no reusable grain definitions; '
+                              'mentions naming conventions (stg_/int_/fct_/dim_), one-source-one-staging rule, docs/lineage as onboarding tools, and '
+                              'that marts should read from staging/intermediate — never raw — so the DAG enforces the contract.'},
+              'follow_up_probes': ['Where do you put a business rule needed by three different marts?',
+                                   'Source column renamed upstream — walk through what breaks and where you fix it in a layered vs unlayered '
+                                   'project.',
+                                   'Which layers get unique/not_null tests, and which get business-logic tests?'],
+              'explanation': '<p>The canonical shape: <strong>sources</strong> (declared, freshness-checked raw tables) → <strong>staging</strong> '
+                             '(one model per source table: rename, cast, basic cleaning — no joins/business logic) → <strong>intermediate</strong> '
+                             '(reusable business transformations, grain changes) → <strong>marts</strong> (facts/dimensions consumed by BI). The '
+                             'point is isolation of change: upstream schema drift is absorbed in exactly one staging model; business logic lives '
+                             'once in intermediate instead of copy-pasted across reports; tests attach where guarantees matter (key integrity at '
+                             'staging, contracts at marts). Skipping layers produces the familiar swamp: five reports each cleaning raw data '
+                             'slightly differently, breaking simultaneously and inconsistently on any upstream change, with lineage too tangled to '
+                             'review.</p>'},
+ 't-dbt-07': {'type': 'short_answer',
+              'topic': 'DBT',
+              'subtopic': 'incremental_pitfalls',
+              'difficulty': 'Advanced',
+              'tags': ['incremental', 'late_arriving_data', 'full_refresh', 'schema_change'],
+              'title': 'Where incremental models go wrong',
+              'question': '<p>List and explain the main ways incremental dbt models silently produce wrong data, and for each give the standard '
+                          'defense. Cover at least: late-arriving/mutating source rows, the semantics of the is_incremental() filter, schema '
+                          'changes, and non-incrementalizable logic (e.g. window functions over full history). When do you give up and '
+                          'full-refresh?</p>',
+              'rubric': {'1': "Knows incremental models 'process only new data' but can't name a failure mode beyond 'it might miss data'.",
+                         '3': 'Names late data escaping a max-timestamp filter (defense: lookback window / merge on key), schema changes not '
+                              'propagating (defense: on_schema_change config), and understands is_incremental() gates the filter to incremental '
+                              'runs; knows --full-refresh exists as the reset.',
+                         '5': 'All of 3, plus: window/aggregate logic whose value depends on rows outside the increment (running totals, '
+                              'dedup-by-latest across history) — defense: restrict such logic to within-partition scopes, or recompute affected '
+                              'partitions (delete+insert by date), or accept full refresh; idempotency framing (re-running a batch must not '
+                              'duplicate — merge/unique_key); source updates vs appends distinction driving strategy; periodic scheduled '
+                              'full-refresh as drift correction; testing incremental parity (dev full build vs incremental build comparison).'},
+              'follow_up_probes': ['Your incremental model computes a running total per customer — what exactly breaks incrementally, and what are '
+                                   'the options?',
+                                   'How would you detect that an incremental model has drifted from its full-refresh truth?',
+                                   "What does on_schema_change='append_new_columns' do to historical rows?"],
+              'explanation': '<p>Incremental correctness is a contract with several standard breach points. (1) <strong>Late/mutating rows</strong>: '
+                             'a filter of "newer than my max" misses rows that arrived late or changed after load — defend with a lookback window '
+                             'plus merge on a unique key. (2) <strong>Filter semantics</strong>: everything inside <code>is_incremental()</code> '
+                             'must make the incremental batch <em>self-sufficient</em>; any logic that needs rows outside the batch (running totals, '
+                             'cross-history dedup) silently computes on partial data — restructure to partition-scoped logic, recompute whole '
+                             "affected partitions, or don't incrementalize. (3) <strong>Schema drift</strong>: configure "
+                             '<code>on_schema_change</code> (new columns backfill as NULL — know that). (4) <strong>Idempotency</strong>: re-runs '
+                             "must not duplicate — that's the unique_key. Drift correction: scheduled <code>--full-refresh</code> plus a parity test "
+                             "comparing incremental output to a from-scratch build; full refresh is the right call when logic isn't "
+                             'incrementalizable or after semantic changes to the model.</p>'},
+ 't-dbt-08': {'type': 'short_answer',
+              'topic': 'DBT',
+              'subtopic': 'deployment',
+              'difficulty': 'Advanced',
+              'tags': ['ci_cd', 'slim_ci', 'state_modified', 'environments', 'blue_green'],
+              'title': 'dbt deployment and CI that scales',
+              'question': '<p>Design the deployment setup for a 400-model dbt project with 10 contributing engineers: environments, what runs on a '
+                          'pull request, what runs in production and when, and how you keep CI fast as the project grows. Include how state '
+                          'comparison (slim CI) works and one strategy for releasing breaking changes to consumed marts safely.</p>',
+              'rubric': {'1': "'Run dbt run in CI and in prod on a schedule' with a single shared schema and no state/selective-build awareness.",
+                         '3': 'Separate dev/CI/prod targets via profiles (per-PR schemas for isolation); PRs build + test only modified models and '
+                              'their children using state:modified+ against a production manifest (slim CI); prod runs scheduled/orchestrated dbt '
+                              'build with tests gating; mentions docs generation and artifact storage.',
+                         '5': 'All of 3, plus: defer flag so unmodified parents resolve to prod relations instead of rebuilding them; CI schema '
+                              'cleanup; source freshness checks scheduled ahead of builds; blue-green or WAP (write-audit-publish) for breaking mart '
+                              'changes — build into a staging schema, validate, then swap/promote; versioned models or model contracts for '
+                              'consumer-facing stability; job separation (hourly incrementals vs nightly full builds vs weekly full-refresh) and '
+                              'alerting on test failures rather than silent continuation.'},
+              'follow_up_probes': ['How does defer interact with state:modified in a PR build, exactly?',
+                                   'A PR changes a model 300 models deep — what does slim CI actually build?',
+                                   "How do model contracts change what counts as a 'breaking' change?"],
+              'explanation': '<p>The scalable shape: engineers develop in personal schemas; every PR gets an isolated CI schema where dbt builds '
+                             '<code>state:modified+</code> — only changed models and their descendants — comparing against the stored production '
+                             "manifest, with <code>--defer</code> resolving untouched upstream refs to prod objects so CI doesn't rebuild the world. "
+                             'Production runs orchestrated <code>dbt build</code> (tests inline, failures gate downstream), with source-freshness '
+                             'checks scheduled before transformation and manifests archived for the next CI comparison. Breaking changes to consumed '
+                             'marts ship via write-audit-publish/blue-green: build the new version alongside, validate (row counts, contract tests), '
+                             'then atomically swap — never mutate a live consumed schema mid-day. Model contracts and versions formalize what '
+                             'consumers may rely on, turning "breaking" from a surprise into a review-time check.</p>'},
+ 't-model-01': {'type': 'mcq',
+                'topic': 'Data Modelling',
+                'subtopic': 'normalization_tradeoffs',
+                'difficulty': 'Intermediate',
+                'tags': ['normalization', 'denormalization', 'oltp', 'olap'],
+                'title': 'Normalize or denormalize?',
+                'question': "<p>Two systems store the same customer-order domain: (1) the checkout service's operational database, handling "
+                            'thousands of concurrent writes with strict integrity needs; (2) the analytics warehouse, serving aggregate queries over '
+                            'billions of historical rows. What is the standard modelling posture for each, and why?</p>',
+                'options': [{'key': 'A', 'text': 'Denormalize the operational store for write speed; normalize the warehouse to save storage'},
+                            {'key': 'B', 'text': 'Normalize both — redundancy is always a design flaw'},
+                            {'key': 'C', 'text': 'Denormalize both — joins are expensive everywhere'},
+                            {'key': 'D',
+                             'text': 'Normalize the operational store (update anomalies, integrity); denormalize the warehouse (fewer joins, '
+                                     'scan-friendly reads, redundancy tolerated because loads are controlled)'}],
+                'correct_key': 'D',
+                'option_explanations': {'A': 'Wrong — exactly backwards on both counts: duplicated data makes concurrent writes harder not faster, '
+                                             'and warehouse storage is cheap while joins at scan-scale are not.',
+                                        'B': 'Wrong — in an analytical store, rigorous 3NF forces every query through many joins and makes each '
+                                             'fact-lookup expensive; redundancy under a controlled ETL process is a managed cost, not a flaw.',
+                                        'C': 'Wrong — a denormalized operational store must update duplicated facts everywhere they appear, under '
+                                             'concurrency: update anomalies and integrity bugs follow.',
+                                        'D': 'Correct — OLTP normalizes so each fact lives once (no update anomalies, small consistent writes); OLAP '
+                                             'denormalizes into wide/dimensional shapes so huge scans and aggregations avoid join fan-out, with the '
+                                             'ETL pipeline as the single controlled writer.'},
+                'explanation': '<p>Normalization removes redundancy so every fact has one home — the property that makes concurrent transactional '
+                               'writes safe (no update/insert/delete anomalies). Its cost is join depth, which analytical workloads — scanning '
+                               "billions of rows, joining at query time — can't afford. Warehouses therefore denormalize deliberately (star schemas, "
+                               'wide tables): redundancy is acceptable when a single controlled pipeline writes the data and readers vastly '
+                               'outnumber writers. The mature framing is that normalization level is a <em>per-workload dial</em>, not a virtue: '
+                               'writes and integrity pull toward 3NF; read patterns, scan volume, and query simplicity pull toward flattening.</p>'},
+ 't-model-02': {'type': 'mcq',
+                'topic': 'Data Modelling',
+                'subtopic': 'star_snowflake',
+                'difficulty': 'Intermediate',
+                'tags': ['star_schema', 'snowflake_schema', 'dimension'],
+                'title': 'Star vs snowflake schema',
+                'question': '<p>A BI team inherits a warehouse where the product dimension is split into product → subcategory → category → '
+                            'department tables (each a foreign key to the next). Analysts complain every report needs a 5-way join. What is this '
+                            'design, and what is the standard modern recommendation?</p>',
+                'options': [{'key': 'A',
+                             'text': 'A snowflake schema (normalized dimensions); flatten the hierarchy into one wide product dimension unless '
+                                     "there's a strong reason not to"},
+                            {'key': 'B', 'text': 'A degenerate dimension; move the product attributes into the fact table'},
+                            {'key': 'C', 'text': 'A data vault; convert it to snowflake for query performance'},
+                            {'key': 'D', 'text': 'A star schema; keep it — one join per dimension is the ideal'}],
+                'correct_key': 'A',
+                'option_explanations': {'A': 'Correct — normalized (snowflaked) dimension hierarchies save trivial storage but tax every query with '
+                                             'extra joins and complicate BI-tool modeling; the Kimball-style default is one flat dimension row '
+                                             'carrying category/department as columns.',
+                                        'B': 'Wrong — a degenerate dimension is a dimension attribute (like an order number) stored on the fact for '
+                                             'lack of other attributes; stuffing a whole product hierarchy into a billion-row fact multiplies '
+                                             'storage and update pain.',
+                                        'C': 'Wrong — data vault is hub/link/satellite modeling for the integration layer, not a chain of dimension '
+                                             'lookups; and converting anything *to* snowflake worsens the complaint.',
+                                        'D': 'Wrong — a star has denormalized dimensions joining directly to the fact; a chain of '
+                                             'dimension-to-dimension joins is precisely what a star avoids.'},
+                'explanation': '<p><strong>Star</strong>: fact table + denormalized dimensions, one join per dimension — simple, fast, '
+                               'BI-tool-friendly. <strong>Snowflake</strong>: dimensions further normalized into hierarchies — less redundancy, more '
+                               'joins, harder modeling. Storage was the argument for snowflaking, and columnar compression killed it: repeated '
+                               'category strings compress to almost nothing. Modern practice defaults to flat star dimensions, snowflaking only for '
+                               'genuinely shared, independently-maintained reference hierarchies or very wide rarely-used attribute sets. Knowing '
+                               '<em>why</em> the trade-off tilted (compression, cheap storage, query-engine behavior) is what distinguishes a '
+                               'current answer from a 2005 one.</p>'},
+ 't-model-03': {'type': 'mcq',
+                'topic': 'Data Modelling',
+                'subtopic': 'scd_types',
+                'difficulty': 'Intermediate',
+                'tags': ['scd_type_1', 'scd_type_2', 'dimension_history'],
+                'title': 'Which SCD type does the business actually need?',
+                'question': '<p>Sales reps move between territories. The VP asks: "When I look at last year\'s revenue by territory, credit must go '
+                            'to the territory the rep was in <em>when the sale happened</em>." The current dimension just overwrites the rep\'s '
+                            'territory on change. What is the current design and what does the requirement demand?</p>',
+                'options': [{'key': 'A',
+                             'text': 'Currently SCD Type 1 (overwrite); the requirement needs Type 2 — versioned rows with validity ranges so facts '
+                                     'join to the version current at sale time'},
+                            {'key': 'B', 'text': 'Currently SCD Type 0; the requirement needs Type 1'},
+                            {'key': 'C', 'text': 'Currently SCD Type 2; the requirement needs Type 1'},
+                            {'key': 'D', 'text': 'Currently SCD Type 1; the requirement needs Type 3 (previous-value column)'}],
+                'correct_key': 'A',
+                'option_explanations': {'A': "Correct — overwrite = Type 1, which rewrites history: every past sale re-attributes to the rep's "
+                                             'current territory. Type 2 keeps one row per version with valid_from/valid_to (and the fact stores the '
+                                             'surrogate key of the version in effect at transaction time), making historical reports stable.',
+                                        'B': 'Wrong — Type 0 means never changing at all; the dimension is being overwritten, and freezing it '
+                                             "wouldn't attribute sales correctly either.",
+                                        'C': "Wrong — overwriting is the definition of Type 1, not Type 2; and Type 1 is exactly what's breaking the "
+                                             "VP's report.",
+                                        'D': 'Wrong — Type 3 keeps only one previous value in an extra column; a rep with three moves loses history, '
+                                             "and 'as of sale time' needs full versioning, not last-move memory."},
+                'explanation': '<p>The SCD types are answers to "what happens to history when an attribute changes": <strong>Type 0</strong> never '
+                               'change; <strong>Type 1</strong> overwrite (history rewritten — right for corrections, wrong for attribution); '
+                               '<strong>Type 2</strong> add a new versioned row with validity dates/current flag — the workhorse for "as it was '
+                               'then" reporting; <strong>Type 3</strong> previous-value column (rarely sufficient). The Type 2 mechanics that '
+                               'interviews probe: surrogate keys per version (facts reference the version, not the natural key), closing/opening '
+                               'rows on change, and the fact-load lookup joining on natural key + transaction date within validity range.</p>'},
+ 't-model-04': {'type': 'mcq',
+                'topic': 'Data Modelling',
+                'subtopic': 'grain',
+                'difficulty': 'Advanced',
+                'tags': ['grain', 'fact_table', 'additivity'],
+                'title': "The fact table that can't answer the question",
+                'question': '<p>A fact table was built at the grain "one row per order per day" (orders aggregated daily). Marketing now asks which '
+                            "individual products were bought together in the same order. Why can't the existing table answer this, and what does the "
+                            'situation teach about grain?</p>',
+                'options': [{'key': 'A',
+                             'text': 'The fact table should have been built at monthly grain for performance, with a separate aggregate for product '
+                                     'questions'},
+                            {'key': 'B', 'text': 'The problem is missing indexes on the product dimension'},
+                            {'key': 'C',
+                             'text': 'Aggregating to order-day destroyed line-item detail; grain must be declared first and set at the lowest level '
+                                     'the business might need, because you can roll up but never drill back down'},
+                            {'key': 'D', 'text': 'It can answer it with a self-join on order date; the model is fine'}],
+                'correct_key': 'C',
+                'option_explanations': {'A': 'Wrong — coarser still! The performance concern is legitimate but the answer is aggregates *in addition '
+                                             'to* atomic grain, not instead of it.',
+                                        'B': 'Wrong — no index recovers data that was never stored.',
+                                        'C': 'Correct — the grain (what one row represents) is the first and most binding declaration of a fact '
+                                             'design. Product-affinity questions need order-line grain; anything coarser cannot be reconstructed. '
+                                             'Atomic grain + aggregate tables on top serves both detail and speed.',
+                                        'D': "Wrong — product-level information isn't in the table at any join arrangement; it was averaged/summed "
+                                             'away at load time.'},
+                'explanation': "<p>Kimball's first commandment: <strong>declare the grain</strong> before choosing dimensions or facts, and prefer "
+                               'the most atomic grain the source can supply — here, one row per order line. Atomic facts roll up to any question '
+                               '(daily totals, basket analysis, product affinity); pre-aggregated facts answer only the questions imagined at design '
+                               'time. Performance is solved by building aggregate tables/materializations <em>on top of</em> the atomic fact, not by '
+                               'coarsening the foundation. A mixed-grain or unclear-grain fact table also breaks additivity assumptions — the root '
+                               'of many silently-wrong dashboards.</p>'},
+ 't-model-05': {'type': 'mcq',
+                'topic': 'Data Modelling',
+                'subtopic': 'surrogate_keys',
+                'difficulty': 'Intermediate',
+                'tags': ['surrogate_key', 'natural_key', 'scd_type_2'],
+                'title': 'Why not join facts on the natural key?',
+                'question': '<p>A modeler proposes dropping surrogate keys: "customer_id from the CRM is already unique — facts should just store '
+                            'that." Which single argument most decisively justifies surrogate keys in a dimensional warehouse with SCD Type 2 '
+                            'dimensions?</p>',
+                'options': [{'key': 'A', 'text': 'Integer surrogates join faster than string natural keys'},
+                            {'key': 'B',
+                             'text': 'With Type 2 versioning, the natural key no longer identifies a unique dimension row — facts must reference the '
+                                     'specific version in effect at transaction time, which only a surrogate can do'},
+                            {'key': 'C', 'text': 'Surrogate keys make the ETL pipeline simpler to write'},
+                            {'key': 'D', 'text': 'Natural keys can contain PII, which must not appear in fact tables'}],
+                'correct_key': 'B',
+                'option_explanations': {'A': 'A real but secondary benefit — compact integer joins help, yet if this were the only argument, hashing '
+                                             "the natural key would suffice; it doesn't address versioning.",
+                                        'B': 'Correct — under SCD2 there are several rows per natural key (one per version). A fact joined on '
+                                             'natural key either fans out across versions or needs the validity-range join on every query; storing '
+                                             "the version's surrogate pins each fact to history correctly, once, at load time.",
+                                        'C': "Wrong — surrogates make ETL *harder* (key lookup/mapping step); they're justified despite this cost, "
+                                             'not because of it.',
+                                        'D': 'A side consideration at best — PII belongs behind governance controls regardless; hashing could handle '
+                                             'it without surrogates.'},
+                'explanation': '<p>Surrogate keys (meaningless integers owned by the warehouse) decouple the model from source systems: they survive '
+                               'source re-keying and mergers, insulate from natural-key reuse, and — decisively — enable <strong>SCD Type '
+                               '2</strong>: each dimension <em>version</em> gets its own surrogate, and facts store the surrogate of the version '
+                               'current at transaction time. Point-in-time correctness then comes free on every join, instead of via error-prone '
+                               'BETWEEN valid_from AND valid_to joins per query. The ETL lookup cost is the accepted price. Bonus point in '
+                               "interviews: surrogates also give a home to 'unknown/not applicable' members (key 0/-1) so facts never carry null "
+                               'foreign keys.</p>'},
+ 't-model-06': {'type': 'mcq',
+                'topic': 'Data Modelling',
+                'subtopic': 'obt_vs_dimensional',
+                'difficulty': 'Advanced',
+                'tags': ['one_big_table', 'dimensional_model', 'semantic_layer'],
+                'title': 'One Big Table vs star schema',
+                'question': "<p>A startup's analytics runs entirely on One Big Table (OBT): a fully-joined, denormalized wide table per domain, "
+                            'rebuilt by dbt. An incoming architect insists on migrating everything to a strict star schema. Which statement best '
+                            'captures the real trade-off?</p>',
+                'options': [{'key': 'A', 'text': 'OBT is always an anti-pattern; star schemas are strictly superior on modern warehouses'},
+                            {'key': 'B',
+                             'text': "Star schemas exist only because old databases couldn't handle wide tables; on columnar warehouses OBT replaces "
+                                     'them entirely'},
+                            {'key': 'C', 'text': 'The two are equivalent since a view can convert either into the other'},
+                            {'key': 'D',
+                             'text': 'OBT optimizes analyst ergonomics and single-table scan speed but duplicates dimension updates, obscures '
+                                     'reusable conformed dimensions, and bloats under SCD churn; dimensional modeling keeps change-management sane — '
+                                     'many teams build dimensional models and expose OBTs as marts on top'}],
+                'correct_key': 'D',
+                'option_explanations': {'A': 'Wrong — flat wide tables are genuinely fast to scan on columnar engines and drastically easier for '
+                                             'analysts and BI tools; calling them always-wrong ignores why they became popular.',
+                                        'B': 'Wrong — the join-cost argument weakened, but the *change-management* argument for dimensions (update '
+                                             'once, conform everywhere) is independent of storage format and still holds.',
+                                        'C': 'Wrong — you can flatten a star into an OBT view, but you cannot recover clean conformed dimensions '
+                                             'from an OBT that never modeled them; the equivalence is one-directional.',
+                                        'D': 'Correct — this is the honest trade: OBT wins on query simplicity/locality, loses on governance at '
+                                             'scale — a dimension attribute fix must rewrite every OBT containing it, conformed definitions drift '
+                                             'between tables, SCD2 explodes width and rebuild cost. The layered compromise (dimensional core, OBT '
+                                             'marts) is standard current practice.'},
+                'explanation': "<p>The modern debate isn't performance-first — columnar engines scan wide tables happily — it's <strong>change "
+                               'management and semantics</strong>. Dimensional cores give each business entity one authoritative, versioned home '
+                               '(fix a customer attribute once; every mart inherits it) and conformed dimensions that make metrics agree across '
+                               'domains. OBTs give analysts a no-joins experience and excellent scan locality, but at scale suffer duplicated logic, '
+                               'drift between tables, and painful SCD handling. Hence the converged pattern: model dimensionally in the '
+                               'transformation layer, then <em>materialize</em> wide OBT-style marts per consumer — ergonomics on the outside, '
+                               'governance underneath.</p>'},
+ 't-model-07': {'type': 'short_answer',
+                'topic': 'Data Modelling',
+                'subtopic': 'fact_dimension_design',
+                'difficulty': 'Advanced',
+                'tags': ['fact_types', 'additivity', 'factless_fact', 'conformed_dimensions'],
+                'title': 'Design the ride-sharing rides model',
+                'question': "<p>Design the core dimensional model for a ride-sharing app's analytics: rides, riders, drivers, city zones, "
+                            'promotions. Specify: the fact table(s) and their exact grain; key dimensions and which are SCD2; three example measures '
+                            'with their additivity classification (fully/semi/non-additive); and one place a factless fact table would earn its '
+                            'place. Justify each choice.</p>',
+                'rubric': {'1': 'Lists entities as tables without grain declarations, measure/dimension separation, or any additivity awareness.',
+                           '3': 'fct_rides at one-row-per-completed-ride grain with rider/driver/zone/promo/date-time dimensions; driver dimension '
+                                'SCD2 (city/tier changes affect attribution); measures like fare (additive), duration (additive), rating '
+                                "(non-additive — average, don't sum); reasonable justification.",
+                           '5': 'All of 3, plus: considers a ride-status event fact vs completed-ride snapshot distinction (accumulating snapshot '
+                                'for the request→pickup→dropoff lifecycle with lag measures); semi-additive example done right (e.g. active-driver '
+                                'count additive across zones but not across time); factless fact for driver-online-hours or promo-eligibility (event '
+                                'with no measure enabling coverage/utilization questions); conformed date/zone dimensions shared across facts; '
+                                'surrogate keys + late-arriving dimension handling mentioned.'},
+                'follow_up_probes': ['Why is rider rating non-additive, and what do you store to make averages correct at any rollup?',
+                                     'Walk through the accumulating-snapshot updates as a ride progresses.',
+                                     'A promo attribute changes mid-campaign — Type 1 or Type 2, and what breaks under each?'],
+                'explanation': '<p>A solid answer starts with grain: <strong>fct_rides</strong>, one row per completed ride (the atomic business '
+                               'event), keyed to dim_rider, dim_driver (SCD2 — territory/tier history matters for attribution), dim_zone (pickup and '
+                               'dropoff roles), dim_date/time, dim_promo. Additivity: fare and distance are fully additive; counts of active drivers '
+                               'are <em>semi-additive</em> (sum across zones, not across time); ratings are <em>non-additive</em> — store '
+                               'sum-of-ratings and count so any rollup recomputes the average correctly. The ride lifecycle '
+                               '(requested→accepted→picked-up→completed) fits an <strong>accumulating snapshot</strong> fact with one row per ride '
+                               'updated as milestones land, enabling lag analysis. A <strong>factless fact</strong> (driver_online by '
+                               "driver/zone/hour, no measures) answers utilization and coverage questions that ride facts alone cannot — 'drivers "
+                               "online with zero rides' has no ride row to count.</p>"},
+ 't-model-08': {'type': 'short_answer',
+                'topic': 'Data Modelling',
+                'subtopic': 'scd2_implementation',
+                'difficulty': 'Advanced',
+                'tags': ['scd_type_2', 'surrogate_key', 'late_arriving', 'point_in_time'],
+                'title': 'SCD2 end-to-end, with the ugly parts',
+                'question': "<p>Explain how you'd implement an SCD Type 2 customer dimension end-to-end in a warehouse: table structure, the merge "
+                            'logic per batch, how fact loads pick the right version, and how you handle the two classic complications — '
+                            'late-arriving facts (fact for a period whose dimension version arrived later) and late-arriving dimension changes '
+                            '(change notified after facts already loaded). What monitoring tells you the SCD is silently broken?</p>',
+                'rubric': {'1': "Describes 'keeping history' abstractly or only names valid_from/valid_to columns; no merge mechanics, no fact-side "
+                                'story.',
+                           '3': 'Structure: surrogate key, natural key, tracked attributes, valid_from/valid_to, is_current; batch merge closes '
+                                'changed current rows and inserts new versions; fact load looks up surrogate by natural key + event date within '
+                                'validity range; acknowledges late data as a problem even if the handling is thin.',
+                           '5': 'All of 3, plus: late-arriving facts resolved by the range lookup (not is_current!) and a policy for facts predating '
+                                'all versions (backdated initial version or unknown member); late-arriving dimension changes require inserting a '
+                                "version mid-history — splitting an existing validity range — and restating affected facts' surrogates (or accepting "
+                                'documented drift); monitoring: overlapping/gapped validity ranges per natural key, >1 is_current per key, fact rows '
+                                "joined to 'unknown', version-churn anomalies; idempotent merge keyed on (natural key, change timestamp)."},
+                'follow_up_probes': ['Why must the fact lookup use the validity range rather than is_current, and what bug does is_current produce?',
+                                     'A dimension change arrives dated three weeks ago; walk through the exact table surgery.',
+                                     'How do you make the SCD merge idempotent when the batch is replayed?'],
+                'explanation': '<p>Structure: surrogate_key (PK), natural_key, tracked attributes, valid_from, valid_to (null/9999 for current), '
+                               "is_current. Batch merge: detect changes by comparing incoming attributes (or a hash) to each natural key's current "
+                               'version; close the current row (valid_to = effective date) and insert the new version — idempotently, so replays '
+                               "don't double-version. Fact loads resolve the surrogate via natural key + event_date BETWEEN valid_from AND valid_to "
+                               "— never is_current, which stamps historical facts with today's version. The ugly parts: <strong>late facts</strong> "
+                               'land correctly via the range lookup, but need a policy when they predate all versions (backdate the first version or '
+                               'route to an unknown member); <strong>late dimension changes</strong> mean splitting an existing validity range and, '
+                               'strictly, restating surrogates on facts loaded in the gap — a cost some teams accept as documented drift. Health '
+                               'checks: no overlaps or gaps in ranges, exactly one current row per key, and a low, stable rate of unknown-member '
+                               'joins.</p>'},
+ 't-dwh-01': {'type': 'mcq',
+              'topic': 'Data Warehousing',
+              'subtopic': 'oltp_vs_olap',
+              'difficulty': 'Intermediate',
+              'tags': ['oltp', 'olap', 'workload_separation'],
+              'title': 'Why not run analytics on the production database?',
+              'question': '<p>A growing company runs BI dashboards directly against a read replica of their production Postgres. Reports are getting '
+                          'slower and the DBA objects to adding more replicas. What is the <em>fundamental</em> reason this approach stops scaling, '
+                          'beyond "the replica is busy"?</p>',
+              'options': [{'key': 'A', 'text': 'BI tools require a proprietary warehouse protocol that Postgres lacks'},
+                          {'key': 'B', 'text': 'Read replicas lag behind the primary, so dashboards are never fresh enough'},
+                          {'key': 'C',
+                           'text': 'OLTP row stores are physically organized for point reads/writes of whole rows; analytical scans aggregate few '
+                                   'columns over millions of rows, a pattern row storage serves with maximal wasted IO — the mismatch is '
+                                   'architectural, not capacity'},
+                          {'key': 'D', 'text': 'Postgres cannot execute aggregate queries correctly at scale'}],
+              'correct_key': 'C',
+              'option_explanations': {'A': 'Wrong — BI tools happily speak Postgres; no such protocol requirement exists.',
+                                      'B': "Wrong — replica lag is usually seconds and rarely the dashboard bottleneck; it also wouldn't explain "
+                                           'slowness.',
+                                      'C': 'Correct — row stores fetch entire rows per page, so summing one column of 100 means reading ~100× the '
+                                           'needed bytes, through a buffer pool sized for hot transactional rows and B-tree access. Columnar '
+                                           'warehouses invert the layout for exactly this pattern. More replicas add capacity to the wrong '
+                                           'architecture.',
+                                      'D': "Wrong — correctness isn't the issue; Postgres computes correct aggregates, slowly, at this shape and "
+                                           'scale.'},
+              'explanation': '<p>OLTP: many small transactions touching few whole rows — served by row storage, B-trees, normalized schemas. OLAP: '
+                             'few queries touching few columns of very many rows — served by columnar storage (read only referenced columns, '
+                             'compress aggressively), scan-oriented execution, denormalized models. Running OLAP on OLTP infrastructure fails on '
+                             'physics (IO amplification), on interference (a big scan evicts the hot transactional working set), and on modeling '
+                             "(3NF join depth). That's the load-bearing justification for a separate analytical store — not vendor preference.</p>"},
+ 't-dwh-02': {'type': 'mcq',
+              'topic': 'Data Warehousing',
+              'subtopic': 'columnar_storage',
+              'difficulty': 'Intermediate',
+              'tags': ['columnar', 'compression', 'vectorized_execution'],
+              'title': 'Why columnar makes analytics fast',
+              'question': '<p>Which combination of effects explains why a columnar warehouse often answers <code>SELECT region, SUM(revenue) ... '
+                          'GROUP BY region</code> over a 2-billion-row, 80-column table hundreds of times faster than a row store?</p>',
+              'options': [{'key': 'A', 'text': 'The GROUP BY is precomputed at load time for all possible groupings'},
+                          {'key': 'B', 'text': 'Columnar databases keep the whole table in RAM, unlike row stores'},
+                          {'key': 'C',
+                           'text': 'Only the 2 referenced columns are read; same-typed column runs compress heavily (RLE/dictionary); execution is '
+                                   'vectorized over column batches; per-block min/max lets scans skip data'},
+                          {'key': 'D', 'text': 'Columnar storage maintains a B-tree per column, so every filter becomes an index lookup'}],
+              'correct_key': 'C',
+              'option_explanations': {'A': 'Wrong — no engine precomputes all groupings; materialized aggregates exist but are explicit, separate '
+                                           'objects.',
+                                      'B': 'Wrong — columnar formats are disk formats; the point is reading radically fewer bytes, not caching '
+                                           'everything.',
+                                      'C': 'Correct — the four compounding wins: column pruning (2/80 of the bytes), homogeneous-data compression '
+                                           'shrinking those further, SIMD-friendly batch execution, and zone-map/min-max skipping. Together they '
+                                           'turn IO-bound scans into something close to memory-bandwidth work.',
+                                      'D': 'Wrong — columnar engines generally avoid per-column B-trees; skipping comes from lightweight block '
+                                           'statistics, not index structures.'},
+              'explanation': '<p>Columnar speed is four multiplicative effects: (1) <strong>column pruning</strong> — read 2 of 80 columns ≈ 2.5% of '
+                             'bytes; (2) <strong>compression</strong> — same-typed, often-repeating values encode via dictionary/RLE/delta, commonly '
+                             '5–20×, and engines filter on encoded data; (3) <strong>vectorized execution</strong> — operators process column '
+                             'batches with CPU-cache- and SIMD-friendly loops instead of per-row interpretation; (4) <strong>data skipping</strong> '
+                             '— per-block min/max (zone maps / micro-partition metadata) eliminates blocks before reading. This stack is the shared '
+                             'foundation of Snowflake, BigQuery, Redshift, DuckDB, and the Parquet ecosystem — one mental model covers them '
+                             'all.</p>'},
+ 't-dwh-03': {'type': 'mcq',
+              'topic': 'Data Warehousing',
+              'subtopic': 'etl_vs_elt',
+              'difficulty': 'Intermediate',
+              'tags': ['etl', 'elt', 'transformation_layer'],
+              'title': 'ETL vs ELT — what actually changed?',
+              'question': '<p>Modern data stacks overwhelmingly load raw data into the warehouse first and transform it there with SQL (ELT), where '
+                          'a decade ago transformation happened on external servers before loading (ETL). What primarily drove this shift?</p>',
+              'options': [{'key': 'A', 'text': 'Regulations began requiring raw data to be stored before transformation'},
+                          {'key': 'B', 'text': 'Network bandwidth made moving data twice too expensive, forcing single-pass loading'},
+                          {'key': 'C',
+                           'text': 'Cloud warehouses made scalable compute cheap and elastic inside the warehouse, so transforming after loading '
+                                   'became simpler and often cheaper than maintaining external transform infrastructure — and raw data retained in '
+                                   'the warehouse enables reprocessing'},
+                          {'key': 'D', 'text': 'SQL became expressive enough to replace all procedural transformation code'}],
+              'correct_key': 'C',
+              'option_explanations': {'A': 'Wrong — no such general regulation exists; if anything, privacy rules sometimes push the other way '
+                                           '(minimize what you land).',
+                                      'B': 'Wrong — bandwidth improved; and ELT moves data no fewer times than ETL.',
+                                      'C': 'Correct — when the warehouse itself scales compute on demand, a separate transform tier is redundant '
+                                           'infrastructure. Loading raw first also keeps the unmodified source of truth queryable and '
+                                           're-transformable (fix logic, replay history) — the property dbt-style workflows are built on.',
+                                      'D': 'Wrong — SQL grew, but plenty of transformation logic predates and exceeds it; the shift was '
+                                           'economic/architectural, not linguistic.'},
+              'explanation': '<p>ETL made sense when the warehouse was the scarcest, least scalable resource — protect it by transforming outside. '
+                             'Cloud warehouses inverted the economics: elastic, per-second-billed compute lives <em>inside</em> the warehouse, so '
+                             'land raw data (cheap storage), then transform with versioned SQL (dbt et al.). The under-appreciated benefit is '
+                             '<strong>reprocessability</strong>: raw history is preserved, so transformation bugs are fixed by editing code and '
+                             'rebuilding — impossible when the pre-load transform discarded the original. ETL survives where it should: pre-load PII '
+                             "redaction/tokenization, format normalization, and streaming enrichment that can't wait for a batch.</p>"},
+ 't-dwh-04': {'type': 'mcq',
+              'topic': 'Data Warehousing',
+              'subtopic': 'lakehouse',
+              'difficulty': 'Advanced',
+              'tags': ['data_lake', 'lakehouse', 'table_formats', 'acid'],
+              'title': 'What does a lakehouse actually add to a data lake?',
+              'question': '<p>A company stores Parquet files on S3 (a data lake) and is evaluating "lakehouse" table formats (Delta Lake, Iceberg, '
+                          'Hudi). Which capability gap do these formats close?</p>',
+              'options': [{'key': 'A', 'text': 'They compress Parquet further, reducing storage cost'},
+                          {'key': 'B',
+                           'text': 'They add a transactional metadata layer over the files: ACID commits, safe concurrent writers, schema evolution, '
+                                   'time travel, and efficient row-level updates/deletes — turning file collections into reliable tables'},
+                          {'key': 'C', 'text': 'They eliminate the need for a query engine by embedding one in the format'},
+                          {'key': 'D', 'text': 'They replace object storage with a proprietary faster storage engine'}],
+              'correct_key': 'B',
+              'option_explanations': {'A': 'Wrong — data files remain ordinary Parquet; the innovation is metadata, not encoding.',
+                                      'B': 'Correct — raw file collections have no atomicity (readers see half-written partitions), no safe '
+                                           'concurrency, no delete/update semantics (GDPR pain), and rely on slow directory listings. The table '
+                                           "formats' transaction log/manifest layer supplies exactly these database properties on top of open files.",
+                                      'C': 'Wrong — engines (Spark, Trino, DuckDB, warehouse externals) read the format; the format itself executes '
+                                           'nothing.',
+                                      'D': 'Wrong — they deliberately keep open formats on commodity object storage; that openness is the selling '
+                                           'point.'},
+              'explanation': '<p>A plain data lake is files + naming conventions — cheap and open, but not a database: a failed job leaves partial '
+                             "data visible, two writers corrupt each other, deleting one user's rows means rewriting files with no coordination, and "
+                             'query planning starts with an S3 listing. Lakehouse table formats add a <strong>transaction log</strong> (Delta) or '
+                             '<strong>manifest/snapshot tree</strong> (Iceberg): atomic commits, snapshot isolation for concurrent readers/writers, '
+                             'row-level merge/delete, schema and partition evolution, time travel, and statistics-driven file pruning. The strategic '
+                             'effect: warehouse-grade reliability on open storage that many engines can query — which is why the warehouse/lake '
+                             'distinction keeps eroding.</p>'},
+ 't-dwh-05': {'type': 'short_answer',
+              'topic': 'Data Warehousing',
+              'subtopic': 'architecture_layers',
+              'difficulty': 'Intermediate',
+              'tags': ['medallion', 'staging', 'marts', 'raw_layer'],
+              'title': 'Layered warehouse architecture and why it exists',
+              'question': '<p>Describe the standard layered architecture of a modern warehouse (e.g. raw/bronze → cleaned-conformed/silver → '
+                          'marts/gold), what each layer guarantees, and defend the design against a stakeholder who says: "All this copying wastes '
+                          'storage — just build the dashboard tables straight from source." Give two concrete incidents the layering prevents.</p>',
+              'rubric': {'1': "Names layers without responsibilities or guarantees; cannot articulate any benefit beyond 'organization'.",
+                         '3': 'Raw = immutable as-landed data (auditability, replay); cleaned = typed, deduplicated, conformed entities; marts = '
+                              'consumer-shaped aggregates; storage is cheap relative to compute and rework; gives at least one plausible prevented '
+                              'incident (e.g. bad transformation fixed by rebuilding from raw).',
+                         '5': 'All of 3, plus crisp incident narratives (a bug in currency conversion — with raw retained, fix and rebuild affected '
+                              'tables; source system re-keys customers — one conformed layer absorbs the change instead of 40 dashboards); notes '
+                              'contracts/tests at each boundary, immutability of raw as the audit and replay foundation, cost framing (storage '
+                              'pennies vs engineer-days), and awareness of when to prune layers (avoid cargo-cult empty layers).'},
+              'follow_up_probes': ['Which layer does a deduplication rule belong to, and why?',
+                                   'When is skipping the intermediate layer actually right?',
+                                   'How do you keep silver/gold rebuildable — what must be true of every transformation?'],
+              'explanation': '<p>The layers encode guarantees: <strong>raw/bronze</strong> — exactly what arrived, immutable, the replayable source '
+                             'of truth and audit trail; <strong>cleaned/silver</strong> — typed, deduplicated, conformed business entities (each '
+                             'cleaning decision made once); <strong>marts/gold</strong> — consumer-shaped, aggregated, documented products. The '
+                             "stakeholder's storage objection inverts the real economics: duplicated bytes cost pennies; duplicated <em>logic</em> "
+                             'and unreproducible tables cost incidents. Prevented incidents: (1) a transformation bug is repaired by fixing code and '
+                             'rebuilding downstream from raw — without raw, the original data is gone; (2) an upstream schema/key change lands in '
+                             'one staging model rather than every report. The discipline that makes it work: transformations are deterministic code '
+                             '(rebuildable), and tests/contracts sit at each boundary.</p>'},
+ 't-dwh-06': {'type': 'short_answer',
+              'topic': 'Data Warehousing',
+              'subtopic': 'warehouse_vs_lake_choice',
+              'difficulty': 'Advanced',
+              'tags': ['warehouse', 'lake', 'lakehouse', 'platform_choice'],
+              'title': 'Warehouse, lake, or lakehouse for this company?',
+              'question': '<p>A 200-person e-commerce company (Postgres OLTP, clickstream events ~50&nbsp;GB/day, a 3-person data team, BI-heavy '
+                          'usage plus one ML use case in planning) asks you to choose: cloud warehouse, data lake + engines, or lakehouse. Walk '
+                          'through the decision: the axes that matter, your recommendation, what would change it, and the failure mode of each '
+                          'option for <em>this</em> company.</p>',
+              'rubric': {'1': "Picks a technology by fashion ('lakehouse is modern') without engaging team size, workload mix, or operational cost.",
+                         '3': 'Identifies the right axes — team capacity, workload (BI-dominant), data types (relational + semi-structured events, '
+                              'no heavy unstructured), scale (modest) — and recommends a managed warehouse for operational simplicity, with events '
+                              "loaded in; notes the lake's failure mode here (3 people running Spark infrastructure).",
+                         '5': 'All of 3, plus: articulates reversal conditions (unstructured data growth, heavy ML feature pipelines, multi-engine '
+                              'needs, cost at 100× scale → add object-storage lake / adopt lakehouse formats); hybrid path (warehouse now, land raw '
+                              'events also to object storage as cheap insurance); failure modes of all three tied to this context — warehouse: cost '
+                              'creep and lock-in at scale; lake: swamp + engineering drag on a tiny team; lakehouse: newest-moving parts and '
+                              'format/catalog operational burden without the team to absorb it; frames it as staffing-and-workload decision, not '
+                              'technology ranking.'},
+              'follow_up_probes': ['The ML use case becomes central and consumes raw clickstream — what changes?',
+                                   'Which costs dominate at this scale, compute or people?',
+                                   "What's your migration story if warehouse spend becomes untenable in 3 years?"],
+              'explanation': '<p>The honest framing: at 50&nbsp;GB/day, BI-heavy, three engineers — <strong>people are the scarce resource, not '
+                             'compute</strong>. A managed cloud warehouse (with clickstream loaded via a managed pipeline) minimizes operational '
+                             'surface, serves BI natively, and handles semi-structured events fine; dbt on top gives the transformation layer. The '
+                             "lake-first option fails as a swamp plus a part-time infrastructure job the team can't staff; lakehouse formats add "
+                             'real power (open storage, multi-engine, cheap ML access) but also catalogs, compaction, and format operations — worth '
+                             'it when reversal conditions arrive: heavy unstructured/ML workloads, multi-engine consumers, or warehouse costs at '
+                             'much larger scale. The low-regret hedge: also land raw events to object storage from day one — cheap insurance that '
+                             "keeps every future door open. Strong answers name what would change their mind; that's the actual skill being "
+                             'interviewed.</p>'},
+ 't-store-01': {'type': 'mcq',
+                'topic': 'Data Storage',
+                'subtopic': 'file_formats',
+                'difficulty': 'Intermediate',
+                'tags': ['parquet', 'avro', 'csv', 'format_choice'],
+                'title': 'Pick the file format',
+                'question': '<p>Three jobs need a format decision: (1) analytical tables on S3 scanned by column-selective queries; (2) a Kafka '
+                            'pipeline of individual event records needing schema evolution and fast per-record serialization; (3) a one-off export a '
+                            "business partner will open in Excel. What's the right mapping?</p>",
+                'options': [{'key': 'A', 'text': '(1) CSV with gzip, (2) JSON, (3) Parquet'},
+                            {'key': 'B', 'text': '(1) Avro, (2) Parquet, (3) JSON'},
+                            {'key': 'C', 'text': '(1) Parquet, (2) Avro, (3) CSV'},
+                            {'key': 'D', 'text': "Parquet for all three — it's the most efficient format"}],
+                'correct_key': 'C',
+                'option_explanations': {'A': 'Wrong — gzipped CSV has no column pruning, no types, no statistics; JSON per event is workable but '
+                                             "loses Avro's compact encoding and managed evolution.",
+                                        'B': "Wrong — inverted: Avro's row orientation is wrong for column-selective scans, and Parquet's columnar "
+                                             'row groups are wrong for per-record streaming writes.',
+                                        'C': 'Correct — columnar Parquet for scan-heavy analytics (pruning, compression, statistics); row-oriented '
+                                             'Avro for record-at-a-time streaming with first-class schema evolution; CSV where human/tool '
+                                             'compatibility is the entire requirement.',
+                                        'D': 'Wrong — Parquet is miserable as a streaming per-record format (files want large row groups, not single '
+                                             "events) and a business partner can't open it in Excel."},
+                'explanation': '<p>Format choice follows access pattern: <strong>Parquet/ORC</strong> — columnar, compressed, statistics-rich: the '
+                               'default for anything scanned analytically. <strong>Avro</strong> — row-oriented, compact binary, schema '
+                               'carried/registered with robust evolution rules: the default for event streams and record-at-a-time IO. '
+                               '<strong>CSV/JSON</strong> — text, universal, self-describing-ish, inefficient: for interchange with humans and '
+                               'lowest-common-denominator systems. The interview follow-up is always why: columnar layouts amortize over many rows '
+                               'per read (bad for single-event writes), row formats read whole records (bad for two-columns-of-eighty scans).</p>'},
+ 't-store-02': {'type': 'mcq',
+                'topic': 'Data Storage',
+                'subtopic': 'parquet_internals',
+                'difficulty': 'Advanced',
+                'tags': ['parquet', 'row_groups', 'predicate_pushdown', 'statistics'],
+                'title': 'How does Parquet skip data?',
+                'question': "<p>A Spark query filters a 1&nbsp;TB Parquet dataset with <code>WHERE event_date = '2024-06-01' AND amount > "
+                            '1000</code> and reads far less than 1&nbsp;TB even without Hive partitioning on those columns. Which Parquet mechanics '
+                            'enable this?</p>',
+                'options': [{'key': 'A', 'text': 'Parquet files are always sorted by every column, so binary search applies'},
+                            {'key': 'B', 'text': 'Parquet stores a global B-tree index over all columns in a sidecar file'},
+                            {'key': 'C', 'text': 'The filter is applied by S3 itself before returning bytes'},
+                            {'key': 'D',
+                             'text': "Row-group and page-level min/max statistics in footers let readers skip row groups/pages that can't match "
+                                     "(predicate pushdown), and only the referenced columns' chunks are read at all"}],
+                'correct_key': 'D',
+                'option_explanations': {'A': 'Wrong — Parquet imposes no sort order; writers *choose* to sort/cluster precisely to make statistics '
+                                             'selective.',
+                                        'B': 'Wrong — Parquet has no external B-tree sidecar; skipping is statistics-based (plus optional bloom '
+                                             'filters and column indexes within the file).',
+                                        'C': 'Wrong — S3 Select existed for simple cases but is not how engines read Parquet; the skipping logic '
+                                             'lives in the reader.',
+                                        'D': 'Correct — each file footer records per-row-group (and per-page) min/max/null statistics per column; a '
+                                             'reader evaluates predicates against these and skips whole row groups, then reads only the projected '
+                                             "columns' chunks. Effectiveness depends on data layout — clustered values give tight min/max ranges."},
+                'explanation': "<p>Parquet's skipping stack: file footer → row groups (~128MB–1GB horizontal slices) → per-column chunks → pages. "
+                               'Footers carry min/max/null-count statistics at row-group and page level; readers push predicates down against them '
+                               'and skip non-matching units, while <em>projection</em> pushdown reads only referenced column chunks. Two practical '
+                               'corollaries interviews probe: (1) statistics only prune well if values are physically clustered — writing data '
+                               'sorted by common filter columns is a free optimization; (2) tiny files mean tiny row groups, destroying both '
+                               'compression and skipping — the small-files problem again. Dictionary encoding and optional bloom filters extend '
+                               'skipping to equality on high-cardinality columns.</p>'},
+ 't-store-03': {'type': 'mcq',
+                'topic': 'Data Storage',
+                'subtopic': 'compression',
+                'difficulty': 'Intermediate',
+                'tags': ['compression', 'snappy', 'zstd', 'gzip', 'splittable'],
+                'title': 'Choosing a compression codec',
+                'question': '<p>For hot Parquet analytics data that is written once and scanned constantly by a CPU-rich cluster, which '
+                            'consideration set leads to the right codec choice?</p>',
+                'options': [{'key': 'A', 'text': 'bzip2 — best ratio wins because storage is the main cost'},
+                            {'key': 'B', 'text': 'Always gzip — highest compatibility and good ratio'},
+                            {'key': 'C', 'text': 'No compression — decompression CPU would slow every scan'},
+                            {'key': 'D',
+                             'text': 'Balance decompression speed against ratio for the read-heavy pattern: snappy/zstd-low for scan-speed priority, '
+                                     'zstd higher levels when storage/IO dominates; inside Parquet, per-block compression keeps files effectively '
+                                     'splittable either way'}],
+                'correct_key': 'D',
+                'option_explanations': {'A': "Wrong — bzip2's decompression speed is poor enough to dominate scan time; ratio isn't the only term in "
+                                             'the cost function.',
+                                        'B': 'Wrong — gzip decompresses comparatively slowly, taxing every one of the many reads in a '
+                                             "write-once/read-many pattern; it's rarely optimal inside Parquet today.",
+                                        'C': 'Wrong — scans are usually IO/bandwidth-bound; light compression *increases* effective read throughput '
+                                             'because fewer bytes move, at minor CPU cost.',
+                                        'D': 'Correct — the decision is a read/write asymmetry problem: pay compression once, decompression on every '
+                                             'scan. Snappy (fast, moderate ratio) and zstd (tunable, near-snappy speed at much better ratios) are '
+                                             'the modern defaults; and because Parquet compresses pages/blocks internally, parallelism is preserved '
+                                             'regardless.'},
+                'explanation': '<p>Codec choice is a throughput trade, not a ratio contest: write-once/read-many data should optimize the read path, '
+                               'and light-fast codecs typically <em>speed up</em> IO-bound scans (fewer bytes from storage beats free CPU). Modern '
+                               'practice: <strong>zstd</strong> at low-mid levels is the emerging default (snappy-class speed, gzip-class-or-better '
+                               'ratio); snappy remains a fine safe choice. The splittability concern that made whole-file gzip dangerous for raw '
+                               "text files doesn't apply inside Parquet/ORC, which compress per page/stripe — another reason to keep analytics data "
+                               'in real columnar formats rather than compressed CSV.</p>'},
+ 't-store-04': {'type': 'mcq',
+                'topic': 'Data Storage',
+                'subtopic': 'partitioning_layout',
+                'difficulty': 'Advanced',
+                'tags': ['partitioning', 'bucketing', 'cardinality', 'layout'],
+                'title': 'Partition by what?',
+                'question': '<p>A team lays out a 100&nbsp;TB orders dataset on S3 as <code>/orders/customer_id=.../date=.../</code>. With ~40 '
+                            'million customers, queries mostly filter by date range and sometimes by customer. Why is this layout a disaster, and '
+                            "what's the sound design?</p>",
+                'options': [{'key': 'A',
+                             'text': 'Partitioning by a 40M-cardinality key creates hundreds of millions of tiny files and directories, crushing '
+                                     'listings and metadata; partition by date only, and handle customer selectivity via clustering/sorting within '
+                                     'files (or bucketing) so statistics prune'},
+                            {'key': 'B', 'text': "It's fine — partitioning by both filter columns maximizes pruning"},
+                            {'key': 'C', 'text': 'Partitioning is obsolete; store everything in one directory and rely on Parquet statistics'},
+                            {'key': 'D', 'text': 'The order is wrong: date first, then customer_id fixes it'}],
+                'correct_key': 'A',
+                'option_explanations': {'A': 'Correct — partition columns must be low-cardinality and match dominant filters (date). '
+                                             'High-cardinality selectivity belongs *inside* files: sort/cluster by customer_id so min/max statistics '
+                                             'skip, or bucket by customer hash for join/point-lookup workloads.',
+                                        'B': 'Wrong — pruning benefit is real only until partition count explodes; 40M × dates directories mean the '
+                                             'object listing itself becomes the query bottleneck and every partition holds crumbs.',
+                                        'C': 'Wrong — a date range over one giant directory then relies on footer-reads of every file; coarse date '
+                                             "partitioning (or a table format's partition metadata) is still the right first-level cut.",
+                                        'D': 'Wrong — reordering still yields the same explosion of leaf directories (dates × 40M customers).'},
+                'explanation': '<p>Partitioning rules of thumb: partition on <strong>low-cardinality columns that appear in most filters</strong> '
+                               '(date is the classic), sized so each partition holds comfortably large files; never on high-cardinality keys — the '
+                               'small-files/metadata explosion costs more than pruning saves. High-cardinality access is served <em>within</em> '
+                               'partitions: sort/cluster so Parquet statistics prune, or <strong>bucket</strong> (hash into fixed file sets) to '
+                               'serve joins and point lookups. Modern table formats (Iceberg hidden partitioning, Delta clustering/Z-order) move '
+                               'this from directory naming into metadata — but the cardinality logic is unchanged, which is why interviewers keep '
+                               'asking it.</p>'},
+ 't-store-05': {'type': 'mcq',
+                'topic': 'Data Storage',
+                'subtopic': 'object_storage_semantics',
+                'difficulty': 'Advanced',
+                'tags': ['s3', 'object_storage', 'rename', 'consistency'],
+                'title': 'Object storage is not a filesystem',
+                'question': '<p>A pipeline ported from HDFS to S3 uses the classic pattern "write to temp directory, then rename to final location '
+                            'for atomicity" and its runtime doubles — with occasional half-visible outputs when jobs fail. Why?</p>',
+                'options': [{'key': 'A', 'text': "S3's eventual consistency makes all writes unreliable; only HDFS can host pipelines safely"},
+                            {'key': 'B', 'text': 'S3 renames are slower but still atomic; the half-visible outputs must come from another bug'},
+                            {'key': 'C', 'text': 'The temp directory should simply be in the same bucket to make renames instant'},
+                            {'key': 'D',
+                             'text': "Object stores have no rename: 'rename' is copy-then-delete per object, non-atomic and O(data); the fix is "
+                                     'committers/table formats designed for object storage that commit via metadata instead of file moves'}],
+                'correct_key': 'D',
+                'option_explanations': {'A': "Wrong (and outdated) — S3 has been strongly read-after-write consistent since 2020; consistency isn't "
+                                             'the culprit, the missing rename is.',
+                                        'B': 'Wrong — there is no rename primitive at all; the operation is a full copy + delete of every object, '
+                                             'and a crash mid-way leaves partial output, which is exactly the observed symptom.',
+                                        'C': 'Wrong — same-bucket changes nothing; the copy-per-object cost is inherent to the flat keyspace.',
+                                        'D': "Correct — flat-namespace object stores implement 'directories' as key prefixes; renaming a prefix "
+                                             'rewrites every object. Purpose-built commit protocols (S3A committers using multipart-upload '
+                                             'completion) and table formats (Delta/Iceberg atomic metadata commits) restore atomicity without moving '
+                                             'data.'},
+                'explanation': '<p>Object stores differ from filesystems in ways that break ported assumptions: <strong>no rename/move</strong> '
+                               '(copy+delete, non-atomic, proportional to data size), no real directories (prefixes), no append (S3), per-request '
+                               'latency+cost that punishes many small objects, and historically weaker consistency (S3 is strongly consistent now — '
+                               'saying otherwise dates you). Correct patterns: commit via <em>metadata</em>, not file moves — multipart-upload-based '
+                               'committers, or lakehouse table formats whose atomic pointer-swap commit makes output visible all-or-nothing; design '
+                               'layouts for prefix-scans and large objects; and treat listing as expensive. "HDFS habits on S3" is a classic '
+                               'senior-interview probe.</p>'},
+ 't-store-06': {'type': 'mcq',
+                'topic': 'Data Storage',
+                'subtopic': 'small_files',
+                'difficulty': 'Intermediate',
+                'tags': ['small_files', 'compaction', 'streaming_sink'],
+                'title': 'Death by a million files',
+                'question': '<p>A streaming job writes micro-batches to a Parquet table every 30 seconds. After three months, queries on the table '
+                            'are 20× slower despite unchanged data volume, and the platform team reports millions of KB-sized files. What is the '
+                            'core mechanism of the slowdown, and the standard remedy?</p>',
+                'options': [{'key': 'A', 'text': 'The table needs an index; add one over the file paths'},
+                            {'key': 'B',
+                             'text': 'Every query pays per-file costs — listing, opens, footer reads, tiny row groups that defeat compression, '
+                                     'statistics, and vectorized scans; remedy: scheduled compaction into large files (plus a table format that '
+                                     'tracks files in metadata), and larger/coalesced sink batches going forward'},
+                            {'key': 'C', 'text': 'S3 throttles buckets with many objects; move to a bigger bucket tier'},
+                            {'key': 'D', 'text': 'Parquet files degrade over time; rewrite them monthly to refresh the format'}],
+                'correct_key': 'B',
+                'option_explanations': {'A': 'Wrong — no index recovers per-file overhead; fewer, bigger files is the only cure.',
+                                        'B': 'Correct — per-file fixed costs (request latency, footer parse, scheduler task per file) dwarf data '
+                                             'costs at KB sizes, and 30-second micro-batches × partitions × time yields millions of them. Compaction '
+                                             '(e.g. OPTIMIZE / rewrite jobs targeting ~128MB–1GB files) fixes the stock; fixing the sink (longer '
+                                             'triggers, fewer output partitions) stops the flow.',
+                                        'C': 'Wrong — no such bucket tiers exist; request-rate limits are per-prefix and not the primary mechanism '
+                                             'here.',
+                                        'D': "Wrong — Parquet bytes don't rot; the count of files, not their age, is the problem."},
+                'explanation': '<p>The small-files problem is fixed-cost amplification: each file costs a listing entry, an open/GET, a footer '
+                               'parse, a scheduler task, and its own (useless at KB scale) row group — so a million tiny files can cost more than '
+                               'the data itself. Streaming sinks are the classic generator (every trigger × every partition writes a file). Remedies '
+                               'operate on both stock and flow: <strong>compact</strong> existing files into the 128MB–1GB sweet spot (Delta '
+                               'OPTIMIZE, Iceberg rewrite, periodic Spark jobs) and <strong>reduce production</strong> (longer triggers, '
+                               'repartition-before-write, table-format auto-compaction). Table formats also remove the listing cost by tracking '
+                               'files in metadata — but they still want compaction for scan efficiency.</p>'},
+ 't-store-07': {'type': 'short_answer',
+                'topic': 'Data Storage',
+                'subtopic': 'layout_design',
+                'difficulty': 'Advanced',
+                'tags': ['partitioning', 'sorting', 'file_sizing', 'layout_design'],
+                'title': 'Design the storage layout for an event lake',
+                'question': '<p>Design the S3 storage layout for 5&nbsp;TB/day of product events retained for 2 years, consumed by (a) daily batch '
+                            'aggregations over date ranges, (b) ad-hoc debugging queries for a single user_id over a few days, (c) a GDPR delete '
+                            "process. Specify: format, partitioning, in-file organization, target file sizes, whether you'd adopt a table format, "
+                            "and how each consumer's access pattern is served. Call out the trade-offs you're accepting.</p>",
+                'rubric': {'1': "'Store Parquet partitioned by date' with no in-file organization, sizing, or connection to the three consumers.",
+                           '3': 'Parquet + date (and maybe hour) partitioning sized to large files (~128MB–1GB); sorting/clustering by user_id '
+                                'within partitions so statistics serve the debugging pattern; recognizes GDPR delete needs row-level rewrite and '
+                                'that a table format (Delta/Iceberg) makes deletes and compaction manageable.',
+                           '5': 'All of 3, plus: explicit reasoning against user_id partitioning (cardinality explosion); event-time vs '
+                                'ingestion-time partition choice with late-data implication; compaction cadence for the streaming producer; GDPR '
+                                'served by table-format delete + rewrite/merge-on-read with vacuuming of old snapshots (time-travel retention '
+                                "interacts with 'right to be forgotten'!); lifecycle tiering for old partitions; accepted trade-offs stated (sorting "
+                                'cost at write time, clustering only approximate for user lookups, hour partitions × 2 years = partition-count '
+                                'check).'},
+                'follow_up_probes': ['Event-time or ingestion-time partitions — what breaks with each when data arrives late?',
+                                     "Why does time travel/versioning complicate GDPR deletion, and what's the operational answer?",
+                                     'When would you add a secondary copy sorted differently instead of serving all patterns from one layout?'],
+                'explanation': '<p>A defensible design: Parquet (zstd), partitioned by event_date (hour only if daily partitions exceed several GB — '
+                               'check partition count against 2-year retention), files targeted at 256MB–1GB via sink coalescing plus scheduled '
+                               'compaction; rows <strong>sorted by user_id within partitions</strong> so per-file/rowgroup min/max statistics serve '
+                               'the single-user debugging pattern without a second copy — approximate but usually sufficient. Adopt a table format '
+                               '(Iceberg/Delta): atomic commits for the streaming producer, file-level metadata instead of S3 listings, and — '
+                               'decisive here — <strong>row-level deletes for GDPR</strong>, with the crucial detail that old snapshots retain '
+                               'deleted rows until vacuum/expire runs, so retention settings become a compliance control, not just a cost knob. '
+                               'Trade-offs to state aloud: write-time sort cost, late events under event-time partitioning (write to their true '
+                               'date; downstream must tolerate partition rewrites), lifecycle tiering for cold partitions.</p>'},
+ 't-store-08': {'type': 'short_answer',
+                'topic': 'Data Storage',
+                'subtopic': 'format_tradeoff_debate',
+                'difficulty': 'Advanced',
+                'tags': ['format_choice', 'avro_vs_parquet', 'schema_evolution', 'it_depends'],
+                'title': 'One format to rule the pipeline?',
+                'question': '<p>A principal engineer decrees: "To simplify the platform, everything — Kafka topics, the landing zone, and the '
+                            'analytics lake — will use Parquet." Argue the decision properly: where the single-format goal helps, where Parquet '
+                            "specifically breaks down, what you'd propose instead, and under what circumstances the decree would actually be "
+                            'reasonable.</p>',
+                'rubric': {'1': "Either agrees ('Parquet is best') or disagrees ('use Avro') without mapping formats to pipeline stages or naming "
+                                'concrete failure points.',
+                           '3': 'Identifies the core mismatch: Parquet is a batch columnar format — single-record produce/consume on Kafka would '
+                                'mean absurd per-message overhead or buffering; landing zone favors append-friendly row formats with schema registry '
+                                'evolution (Avro/Protobuf); analytics lake is where Parquet belongs; proposes the standard split with conversion at '
+                                'the batch boundary.',
+                           '5': "All of 3, plus: steelmans the decree (fewer converters, one schema story, tooling reuse) and names when it's "
+                                'reasonable (batch-only ingestion, files arriving in bulk, no streaming semantics — then Parquet end-to-end is '
+                                'fine); discusses schema evolution differences (registry-managed Avro compatibility modes vs Parquet schema merge '
+                                'pain); notes the real cost being conversion jobs and where they live; frames the answer as per-stage access '
+                                "patterns, showing 'it depends' reasoning rather than format tribalism."},
+                'follow_up_probes': ['What exactly happens if a producer writes one Parquet file per Kafka message?',
+                                     'How do Avro compatibility modes (backward/forward/full) map to deploy ordering of producers and consumers?',
+                                     'Where would you put the Avro→Parquet conversion, and what late-data issue does it inherit?'],
+                'explanation': '<p>The right answer is a mapping, not a winner. <strong>In-motion</strong> (Kafka): record-at-a-time '
+                               'producing/consuming wants a compact row format with registry-managed evolution — Avro/Protobuf; Parquet per message '
+                               'is pathological (columnar layout amortizes over thousands of rows; per-message footers and row groups are pure '
+                               'overhead). <strong>Landing</strong>: keep the wire format (append-friendly, replayable, schema-tracked). '
+                               '<strong>At-rest analytics</strong>: convert in batch to Parquet — columnar pruning, compression, statistics. The '
+                               "decree's steelman: if ingestion is genuinely batch-only (bulk file drops, no streams), one format is a legitimate "
+                               'simplification. Judgment shown by naming the boundary where the conversion happens (the batch materializer), its '
+                               "late-data implications, and the evolution story on each side — that's what 'it depends, and here's the reasoning' "
+                               'looks like.</p>'},
+ 't-proc-01': {'type': 'mcq',
+               'topic': 'Data Processing',
+               'subtopic': 'processing_models',
+               'difficulty': 'Intermediate',
+               'tags': ['batch', 'micro_batch', 'streaming', 'latency'],
+               'title': 'Batch, micro-batch, or streaming?',
+               'question': '<p>Three requirements arrive: (1) monthly finance close reports; (2) fraud checks that must flag transactions within '
+                           '~200&nbsp;ms; (3) a dashboard fed "near-real-time" where 1–2 minutes of lag is acceptable. Which processing model fits '
+                           'each, at lowest operational cost?</p>',
+               'options': [{'key': 'A', 'text': '(1) micro-batch, (2) micro-batch, (3) true streaming'},
+                           {'key': 'B', 'text': '(1) batch, (2) micro-batch, (3) true streaming'},
+                           {'key': 'C', 'text': '(1) batch, (2) true streaming (event-at-a-time), (3) micro-batch'},
+                           {'key': 'D', 'text': 'True streaming for all three — it subsumes the other models'}],
+               'correct_key': 'C',
+               'option_explanations': {'A': 'Wrong — micro-batch triggers plus scheduling put a floor (typically seconds) over the 200ms budget; and '
+                                            'monthly reports gain nothing from micro-batches.',
+                                       'B': 'Wrong — (2) and (3) are swapped: the tight-SLA workload is the one that needs true streaming.',
+                                       'C': 'Correct — monthly reporting is the definition of batch (simplest, cheapest, replayable); a 200ms SLA '
+                                            'rules out micro-batch scheduling overhead and needs event-at-a-time processing (Flink-style); '
+                                            "minute-level freshness is micro-batch's sweet spot (Structured Streaming triggers) at far lower "
+                                            'complexity than true streaming.',
+                                       'D': 'Wrong in practice — streaming *can* express batch, but running always-on stateful infrastructure for a '
+                                            'monthly report is maximal cost for zero latency benefit.'},
+               'explanation': '<p>Model selection is an SLA-to-cost mapping: <strong>batch</strong> — bounded input, highest throughput, simplest '
+                              'recovery (rerun), right whenever latency tolerance is hours+; <strong>micro-batch</strong> — small scheduled batches '
+                              'giving seconds-to-minutes latency with mostly-batch semantics and ops (Spark Structured Streaming); <strong>true '
+                              'streaming</strong> — event-at-a-time with managed state, sub-second capable, and the highest operational bar (Flink '
+                              'and kin). The professional instinct being tested: pick the <em>cheapest model that meets the SLA</em>, not the most '
+                              'impressive one — and know that "real-time" in stakeholder speech usually means minutes, i.e. micro-batch.</p>'},
+ 't-proc-02': {'type': 'mcq',
+               'topic': 'Data Processing',
+               'subtopic': 'delivery_guarantees',
+               'difficulty': 'Advanced',
+               'tags': ['exactly_once', 'at_least_once', 'idempotency', 'transactional_sink'],
+               'title': "What does 'exactly-once' actually mean?",
+               'question': '<p>A vendor claims their streaming pipeline achieves "exactly-once delivery" into any downstream system. Which statement '
+                           'correctly qualifies that claim?</p>',
+               'options': [{'key': 'A', 'text': 'Exactly-once only requires enabling acknowledgements on the message broker'},
+                           {'key': 'B', 'text': 'Exactly-once is impossible in all senses; every pipeline must deduplicate downstream'},
+                           {'key': 'C',
+                            'text': 'Frameworks provide exactly-once *processing/state* internally (checkpoints + replay), but end-to-end effects '
+                                    'require sink cooperation: transactional/2PC writes or idempotent upserts — otherwise retries after failure '
+                                    'produce duplicates at the sink'},
+                           {'key': 'D',
+                            'text': 'Correct as stated — modern frameworks deliver each event exactly once end-to-end regardless of the sink'}],
+               'correct_key': 'C',
+               'option_explanations': {'A': 'Wrong — broker acks address producer-to-broker durability, not duplicate effects downstream after '
+                                            'consumer failure/replay.',
+                                       'B': 'Too strong — end-to-end exactly-once effects are achievable with cooperating sinks (Kafka→Flink→Kafka '
+                                            'with transactions being the canonical example); the impossibility folklore applies to non-idempotent, '
+                                            'non-transactional sinks.',
+                                       'C': 'Correct — the honest decomposition: at-least-once delivery + deterministic replay from checkpoints '
+                                            'gives exactly-once *state*; end-to-end exactly-once *effects* need transactional sinks (Kafka '
+                                            'transactions, 2PC) or idempotent writes keyed on event identity.',
+                                       'D': "Wrong — the framework can't control an arbitrary sink; after a crash between external write and "
+                                            'checkpoint, replay re-emits, and a non-cooperating sink records duplicates.'},
+               'explanation': '<p>Untangle three layers: <strong>delivery</strong> (how many times a message may arrive: at-most/at-least-once), '
+                              '<strong>processing/state</strong> (frameworks make replayed input hit state exactly once via checkpoint-coordinated '
+                              'snapshots), and <strong>end-to-end effects</strong> (what the outside world observes). The last requires the sink to '
+                              'participate: transactions committed atomically with checkpoints, or <strong>idempotent writes</strong> — upsert by '
+                              'event key, so replays overwrite rather than duplicate. Interview-grade summary: "exactly-once" as marketed = '
+                              'at-least-once + replayable state + (transactional | idempotent) sink; when the sink is dumb, design idempotency '
+                              'yourself.</p>'},
+ 't-proc-03': {'type': 'mcq',
+               'topic': 'Data Processing',
+               'subtopic': 'windowing',
+               'difficulty': 'Intermediate',
+               'tags': ['tumbling', 'sliding', 'session_window', 'aggregation'],
+               'title': 'Pick the window',
+               'question': '<p>Three streaming aggregations: (1) revenue per non-overlapping 5-minute interval; (2) "events in the last 10 minutes" '
+                           "refreshed every minute; (3) grouping a user's activity into visits separated by ≥30 minutes of inactivity. Which window "
+                           'types?</p>',
+               'options': [{'key': 'A', 'text': '(1) sliding, (2) tumbling, (3) global window with a trigger'},
+                           {'key': 'B', 'text': 'All three are tumbling windows with different sizes'},
+                           {'key': 'C', 'text': '(1) tumbling, (2) sliding/hopping, (3) session'},
+                           {'key': 'D', 'text': '(1) session, (2) tumbling, (3) sliding'}],
+               'correct_key': 'C',
+               'option_explanations': {'A': 'Wrong — (1) has no overlap so sliding is wasteful/wrong; (2) is the canonical sliding case, not '
+                                            'tumbling; global+trigger for sessions reinvents session windows badly.',
+                                       'B': 'Wrong — no tumbling configuration produces overlap (2) or data-dependent boundaries (3).',
+                                       'C': 'Correct — fixed, non-overlapping intervals = tumbling; a 10-minute window advancing every minute = '
+                                            'sliding/hopping (each event lands in multiple windows); inactivity-gap-defined, data-driven extents = '
+                                            'session windows.',
+                                       'D': 'Wrong — sessions are defined by gaps, not fixed intervals; assignments are shuffled.'},
+               'explanation': '<p>The three families: <strong>tumbling</strong> — fixed size, no overlap, each event in exactly one window (interval '
+                              'metrics); <strong>sliding/hopping</strong> — fixed size, advancing by a smaller step, events belong to size/step '
+                              'windows (rolling views); <strong>session</strong> — variable extent, closed by an inactivity gap, boundaries come '
+                              'from the data (visits, journeys). Downstream implications worth volunteering: sliding windows multiply state and '
+                              'output rows by the overlap factor; session windows need mergeable state (late events can bridge two sessions into '
+                              "one) — which is why they're the hardest to implement and a favorite follow-up.</p>"},
+ 't-proc-04': {'type': 'mcq',
+               'topic': 'Data Processing',
+               'subtopic': 'watermarks',
+               'difficulty': 'Advanced',
+               'tags': ['watermark', 'event_time', 'late_data', 'allowed_lateness'],
+               'title': 'What a watermark actually promises',
+               'question': '<p>In an event-time streaming job, what is a watermark, and what happens to an event that arrives with a timestamp older '
+                           'than the current watermark (beyond any allowed lateness)?</p>',
+               'options': [{'key': 'A', 'text': 'A watermark is a checkpoint barrier used for failure recovery'},
+                           {'key': 'B',
+                            'text': 'A watermark is the engine\'s moving claim that "no events with timestamp ≤ W are still expected", used to '
+                                    'finalize event-time windows and bound state; events older than W (past allowed lateness) are dropped or '
+                                    "side-outputted, because their window's state has been emitted and purged"},
+                           {'key': 'C', 'text': 'A watermark is the processing-time deadline for each batch; late events go to the next batch'},
+                           {'key': 'D', 'text': 'A watermark blocks the stream until all late events arrive, guaranteeing completeness'}],
+               'correct_key': 'B',
+               'option_explanations': {'A': "Wrong — that's a checkpoint barrier; related plumbing, entirely different purpose.",
+                                       'B': 'Correct — the watermark is a heuristic completeness threshold advancing with observed event times minus '
+                                            "a tolerated delay; it lets the engine close windows and free their state. Beyond-lateness events can't "
+                                            "be incorporated into already-finalized results — they're dropped or routed to a late-data output for "
+                                            'reconciliation.',
+                                       'C': 'Wrong — that describes micro-batch scheduling, not watermarks; watermarks track *event time* regardless '
+                                            'of batch boundaries.',
+                                       'D': 'Wrong — nothing blocks; the watermark is exactly the mechanism for *not* waiting forever, trading '
+                                            'completeness for bounded state and timely results.'},
+               'explanation': '<p>Watermarks answer the unanswerable question "has everything up to time T arrived?" with a configured bet: W(t) = '
+                              "max observed event time − tolerated disorder. When the watermark passes a window's end (+allowed lateness), the "
+                              'window finalizes: results emit, state purges — which is what keeps unbounded streams from accumulating unbounded '
+                              'state. The trade-off triangle to articulate: larger tolerance → more complete results, more state, later answers; '
+                              'smaller → timely and lean, more dropped stragglers. Mature pipelines measure their real lateness distribution, set '
+                              'the watermark from data, and route beyond-lateness events to a side output reconciled by batch — not silently '
+                              'dropped.</p>'},
+ 't-proc-05': {'type': 'mcq',
+               'topic': 'Data Processing',
+               'subtopic': 'checkpointing',
+               'difficulty': 'Advanced',
+               'tags': ['checkpoint', 'state_recovery', 'offsets', 'replay'],
+               'title': 'Recovering a stateful stream job',
+               'question': '<p>A stateful streaming job (running counts per key, reading Kafka) crashes and restarts from its last checkpoint. Which '
+                           'description of what happens is correct?</p>',
+               'options': [{'key': 'A',
+                            'text': 'The job resumes from the latest Kafka offset at restart time; counts continue from the checkpointed state, and '
+                                    'messages between checkpoint and crash are skipped'},
+                           {'key': 'B',
+                            'text': 'State and source offsets were snapshotted consistently together; the job restores state and rewinds Kafka to '
+                                    'the checkpointed offsets, reprocessing the post-checkpoint gap so state ends correct — with duplicates possible '
+                                    'at non-transactional sinks for that gap'},
+                           {'key': 'C', 'text': 'The job replays the entire Kafka topic from the beginning to rebuild state'},
+                           {'key': 'D', 'text': 'Checkpointing writes results to the sink; recovery reloads state from the sink tables'}],
+               'correct_key': 'B',
+               'option_explanations': {'A': "Wrong — resuming from 'latest' loses the messages between checkpoint and crash: state would be "
+                                            'permanently missing those events; consistent recovery requires rewinding to the *checkpointed* offsets.',
+                                       'B': 'Correct — the essence of checkpoint-based recovery: an atomic pair (state snapshot, source positions). '
+                                            'Restore both, replay the gap; state converges to exactly-once. Sink-side duplicates for the replayed '
+                                            'span are the reason transactional/idempotent sinks matter.',
+                                       'C': 'Wrong — full-topic replay is only for bootstrapping new state or disaster recovery without checkpoints; '
+                                            'normal recovery replays only since the last checkpoint (and retention must cover at least that span).',
+                                       'D': 'Wrong — checkpoints live in state backends/checkpoint storage, not in business sinks; sinks generally '
+                                            "can't reconstruct internal operator state."},
+               'explanation': '<p>The invariant that makes stateful streaming trustworthy: <strong>state and input positions are snapshotted '
+                              "atomically</strong> (Flink's barrier-aligned snapshots; Structured Streaming's offset log + state store versions). "
+                              'Recovery = restore state + rewind sources to matching offsets + reprocess the gap — deterministic replay lands state '
+                              'exactly-once, while side effects for the gap repeat unless the sink is transactional or idempotent (connecting to the '
+                              'exactly-once question). Operational corollaries: broker retention must exceed worst-case recovery lag; checkpoint '
+                              'interval trades runtime overhead against replay length; and state schema changes across restarts need explicit '
+                              'migration support.</p>'},
+ 't-proc-06': {'type': 'short_answer',
+               'topic': 'Data Processing',
+               'subtopic': 'idempotent_reprocessing',
+               'difficulty': 'Advanced',
+               'tags': ['idempotency', 'reprocessing', 'upsert', 'overwrite_partition'],
+               'title': 'Make the pipeline safely re-runnable',
+               'question': '<p>A daily job reads raw events and appends aggregated rows to a reporting table. Last night it half-ran and was '
+                           'restarted, and the reports double-counted. Explain why append-based pipelines fail this way, then design the job to be '
+                           '<strong>idempotent</strong> — same output no matter how many times a period is (re)run. Give at least two standard '
+                           'patterns, when each applies, and what has to be true of the inputs.</p>',
+               'rubric': {'1': "Proposes 'add a check so it doesn't run twice' (locks/flags) without recognizing that partial failures and retries "
+                               'make re-execution inevitable and the *write semantics* must absorb it.',
+                          '3': 'Names the core patterns: overwrite-by-partition (delete+insert or INSERT OVERWRITE the period being processed) and '
+                               'merge/upsert on a natural key; understands deterministic reads (process a bounded, well-defined input slice) are '
+                               'prerequisite.',
+                          '5': 'All of 3, plus: precise applicability — partition overwrite fits period-aligned aggregates (needs output partitioned '
+                               'by the processing period; reruns replace, never add), merge fits row-keyed outputs (needs a stable unique key and '
+                               "deterministic transformation); input determinism spelled out (event-time slice from immutable raw, not 'whatever is "
+                               "in the source now'); mentions write-audit-publish/staging-swap as the transactional variant, run_id lineage columns "
+                               "for debugging, and why orchestrator-level 'only run once' is a mitigation but never the guarantee."},
+               'follow_up_probes': ["The aggregation reads 'new rows since last run' — why does that break idempotency, and what replaces it?",
+                                    'What makes merge insufficient if the transformation itself is non-deterministic?',
+                                    'How does write-audit-publish interact with consumers reading mid-swap?'],
+               'explanation': '<p>Appends encode an assumption — "each run happens exactly once" — that real systems violate constantly (retries, '
+                              'partial failures, backfills, human reruns). Idempotency moves the guarantee into <strong>write semantics</strong>: '
+                              "(1) <strong>overwrite-by-partition</strong> — compute a period's full result from an immutable, "
+                              "deterministically-bounded input slice and atomically replace that period's output partition; rerunning replaces "
+                              'identical data. Fits period-aligned batch aggregates. (2) <strong>merge/upsert</strong> — write keyed rows with MERGE '
+                              'on a stable unique key; replays update rather than duplicate. Fits row-grained outputs and late corrections. '
+                              'Prerequisites for both: deterministic reads (event-time slices from immutable raw — never "rows since last run") and '
+                              'deterministic transforms. Dress it with write-audit-publish for atomic visibility and run_id lineage for forensics; '
+                              'treat scheduler locks as convenience, not correctness.</p>'},
+ 't-proc-07': {'type': 'short_answer',
+               'topic': 'Data Processing',
+               'subtopic': 'backfill_design',
+               'difficulty': 'Advanced',
+               'tags': ['backfill', 'reprocessing', 'late_data', 'parallel_run'],
+               'title': 'Backfilling six months without breaking today',
+               'question': '<p>A bug is found in a transformation that has produced subtly wrong values for six months, feeding dashboards and two '
+                           'downstream ML models. Design the backfill: how you validate the fix, execute the reprocessing at scale without '
+                           'disrupting current daily runs, handle the downstream consumers, and communicate. What makes a pipeline architecture '
+                           'backfill-friendly in the first place?</p>',
+               'rubric': {'1': "'Rerun the job for old dates' with no validation, downstream, or interference thinking.",
+                          '3': 'Fix + validate on sample periods comparing old/new outputs; run the historical reprocess as a separate parameterized '
+                               'job over date ranges (bounded parallelism so prod SLAs and warehouse capacity survive); relies on idempotent '
+                               'partition overwrites; notifies dashboard owners and retrains/backtests ML consumers on corrected data.',
+                          '5': 'All of 3, plus: quantifies the diff before overwriting (which metrics move, by how much — stakeholders sign off on '
+                               'history changing); write-audit-publish or shadow tables with an atomic swap so consumers never see mixed old/new '
+                               'history; dependency-ordered backfill of *downstream* derived tables (fixing one layer poisons nothing if children '
+                               'rebuild too); notes ML specifics (training data changed → retrain/evaluate, feature drift check); '
+                               'backfill-friendliness = idempotent period-keyed writes, immutable raw history, parameterized runs, decoupled '
+                               'capacity, and lineage to find every affected child.'},
+               'follow_up_probes': ['Why must downstream tables be rebuilt in dependency order, and what tells you the order?',
+                                    "Dashboards' historical numbers will change — who decides that's acceptable and how do you version the story?",
+                                    'What would make this backfill impossible, and how do you design so it never becomes true?'],
+               'explanation': '<p>A backfill is a controlled rewrite of history, so it has four phases. <strong>Validate</strong>: run the fixed '
+                              'logic on sample periods, diff against current outputs, quantify the movement — history changing under dashboards is a '
+                              'stakeholder decision, not a technical one. <strong>Execute</strong>: a parameterized run-for-date-range job (the same '
+                              'code as daily, different parameters), throttled parallelism so daily SLAs and warehouse capacity survive; idempotent '
+                              'period-overwrite writes make partial failures harmless. <strong>Propagate</strong>: rebuild downstream derived tables '
+                              'in DAG order (lineage tells you the set), and for ML consumers treat it as a data-change event — retrain, '
+                              're-evaluate, compare. <strong>Publish</strong>: shadow/staging tables swapped atomically (write-audit-publish) so no '
+                              'consumer reads half-corrected history. The design lesson: backfill-ability comes from immutable raw + deterministic '
+                              'parameterized transforms + period-keyed idempotent writes + lineage — retrofitting any of these mid-incident is the '
+                              'expensive version.</p>'},
+ 't-sysd-01': {'type': 'mcq',
+               'topic': 'Data Engineering System Design',
+               'subtopic': 'pipeline_stages',
+               'difficulty': 'Beginner',
+               'tags': ['ingestion', 'storage', 'processing', 'serving'],
+               'title': 'The four stages of a data platform',
+               'question': '<p>A new engineer asks what a "data platform" fundamentally consists of. Which decomposition best captures the standard '
+                           'stages every design discussion is organized around?</p>',
+               'options': [{'key': 'A',
+                            'text': 'Ingestion (getting data in) → Storage (keeping it) → Processing/Transformation (making it useful) → Serving '
+                                    '(exposing it to consumers)'},
+                           {'key': 'B', 'text': 'Collection → Encryption → Compression → Archival'},
+                           {'key': 'C', 'text': 'Extract → Load — transformation is a legacy stage modern platforms skip'},
+                           {'key': 'D', 'text': 'Frontend → Backend → Database → Cache'}],
+               'correct_key': 'A',
+               'option_explanations': {'A': 'Correct — nearly every data system design maps onto these four stages, each with its own technology '
+                                            'space and failure modes; interviewers expect answers structured this way.',
+                                       'B': 'Wrong — those are cross-cutting concerns (security, cost), not the functional pipeline stages.',
+                                       'C': "Wrong — ELT moves transformation *after* loading; it doesn't remove it. Untransformed raw data serves "
+                                            'almost no consumer directly.',
+                                       'D': "Wrong — that's an application-serving decomposition; it says nothing about data movement, "
+                                            'transformation, or analytical consumption.'},
+               'explanation': '<p>The canonical frame: <strong>Ingestion</strong> — batch pulls, CDC, event streams; concerns: reliability, '
+                              'ordering, schema capture. <strong>Storage</strong> — lake/warehouse/both; concerns: format, layout, cost, retention. '
+                              '<strong>Processing</strong> — batch/streaming transformation into modeled, quality-checked data; concerns: '
+                              'correctness, idempotency, backfills. <strong>Serving</strong> — BI, APIs, feature stores, reverse ETL; concerns: '
+                              'latency, concurrency, contracts. Its value is discipline: requirements first, then walk the stages, naming trade-offs '
+                              'at each — the structure interviewers listen for in any "design a pipeline for X" question.</p>'},
+ 't-sysd-02': {'type': 'mcq',
+               'topic': 'Data Engineering System Design',
+               'subtopic': 'batch_vs_streaming_architecture',
+               'difficulty': 'Beginner',
+               'tags': ['batch', 'streaming', 'sla', 'requirements'],
+               'title': 'Does this need streaming?',
+               'question': '<p>A product manager insists a new revenue dashboard must be "real-time." On questioning, decisions based on it are made '
+                           'in a weekly meeting, and finance reconciles the numbers monthly. What is the right engineering response?</p>',
+               'options': [{'key': 'A', 'text': 'Build it streaming — real-time is strictly better and the PM asked for it'},
+                           {'key': 'B', 'text': 'Refuse the requirement — dashboards can never be real-time'},
+                           {'key': 'C', 'text': 'Build both pipelines so the PM can choose later'},
+                           {'key': 'D',
+                            'text': "Translate 'real-time' into a concrete freshness SLA; given weekly decisions, an hourly or daily batch meets the "
+                                    "need at a fraction of streaming's build and operating cost — propose that, and reserve streaming for use cases "
+                                    'whose value decays in seconds or minutes'}],
+               'correct_key': 'D',
+               'option_explanations': {'A': 'Wrong — streaming adds always-on infrastructure, state management, late-data semantics, and a higher '
+                                            'on-call burden; buying that for a weekly decision cadence is pure waste.',
+                                       'B': 'Wrong — genuinely real-time dashboards exist and are sometimes justified (ops monitoring, fraud); the '
+                                            'issue is fit, not possibility.',
+                                       'C': 'Wrong — double build and double run cost to avoid one requirements conversation is the most expensive '
+                                            'possible answer.',
+                                       'D': "Correct — 'real-time' from stakeholders is almost never a number; the engineering move is converting it "
+                                            'into a freshness SLA and pricing the options. Weekly decisions tolerate hours of lag comfortably.'},
+               'explanation': '<p>The most common junior-vs-senior separator in design interviews: seniors interrogate the requirement before '
+                              'choosing technology. Freshness is a cost curve — batch (hours) is cheap and boring; micro-batch (minutes) modest; '
+                              'true streaming (seconds) expensive to build and operate. The value side must justify the cost side: fraud detection, '
+                              'inventory during flash sales, and ops alerting decay in seconds; executive dashboards almost never do. Asking "what '
+                              'decision is made, how often, and what does staleness cost?" is the design skill being tested — and "batch until '
+                              'proven otherwise" is a defensible default stance.</p>'},
+ 't-sysd-03': {'type': 'mcq',
+               'topic': 'Data Engineering System Design',
+               'subtopic': 'cdc_ingestion',
+               'difficulty': 'Intermediate',
+               'tags': ['cdc', 'change_data_capture', 'replication', 'ingestion'],
+               'title': 'Getting data out of the OLTP database',
+               'question': '<p>You must continuously replicate a busy Postgres orders table into the warehouse with row-level fidelity (including '
+                           'updates and deletes) and minimal load on the source. Which approach is the standard best fit?</p>',
+               'options': [{'key': 'A',
+                            'text': 'Application-level dual writes: the service writes to Postgres and the warehouse in the same request'},
+                           {'key': 'B', 'text': 'A cron job running SELECT * every 5 minutes and overwriting the warehouse copy'},
+                           {'key': 'C',
+                            'text': "Log-based change data capture: stream the database's write-ahead log (e.g. via Debezium) into events consumed "
+                                    'by the warehouse loader'},
+                           {'key': 'D', 'text': 'Incremental pulls with WHERE updated_at > :last_run every 5 minutes'}],
+               'correct_key': 'C',
+               'option_explanations': {'A': 'Wrong — dual writes have no transactional guarantee across the two systems: one write succeeds, the '
+                                            'other fails, and the stores drift apart; this is a textbook distributed-systems anti-pattern.',
+                                       'B': 'Wrong — full re-extracts hammer the source, scale with table size not change volume, and still miss the '
+                                            '*history* of changes between snapshots.',
+                                       'C': 'Correct — reading the WAL captures every insert/update/delete in commit order with near-zero query load '
+                                            "on the source; it's the standard architecture (Debezium/Kafka or managed equivalents) for "
+                                            'OLTP→analytics replication.',
+                                       'D': "Wrong — timestamp polling misses hard deletes entirely, silently skips rows whose updated_at isn't "
+                                            "maintained or whose commits land late, and adds query load; it's acceptable only when those caveats "
+                                            'are.'},
+               'explanation': "<p>Log-based <strong>CDC</strong> treats the database's own replication log as the source of truth for change events "
+                              '— complete (deletes included), ordered, low-impact, and incremental by construction. The consuming side lands change '
+                              'events and applies them (merge on key, ordered by log position) to warehouse tables. Interview follow-ups to be ready '
+                              'for: initial snapshot + log handoff, schema evolution of the source (DDL events), tombstones for deletes, and why '
+                              'dual-writes fail (no atomicity across systems — the outbox pattern is the fix when events must come from the '
+                              'application layer).</p>'},
+ 't-sysd-04': {'type': 'mcq',
+               'topic': 'Data Engineering System Design',
+               'subtopic': 'schema_evolution',
+               'difficulty': 'Intermediate',
+               'tags': ['schema_evolution', 'compatibility', 'contracts'],
+               'title': 'Surviving upstream schema changes',
+               'question': "<p>An upstream team renames a column and drops another in their service's events, and your nightly pipeline fails (best "
+                           'case) — or silently loads NULLs (worst case). Which combination of practices addresses this class of problem?</p>',
+               'options': [{'key': 'A', 'text': 'Freeze the upstream schema forever; changes are prohibited'},
+                           {'key': 'B', 'text': 'Have the data team review every upstream deploy manually'},
+                           {'key': 'C',
+                            'text': 'Schema registry with enforced compatibility rules on producers, data contracts agreed between teams, '
+                                    'tolerant-reader consumers, and staging-layer isolation so changes break one adapter, not every downstream '
+                                    'model'},
+                           {'key': 'D', 'text': 'Parse everything as untyped JSON strings so no schema can ever break'}],
+               'correct_key': 'C',
+               'option_explanations': {'A': 'Wrong — schemas must evolve with the product; prohibition just moves the break to a bigger, later '
+                                            'renegotiation.',
+                                       'B': "Wrong — manual review doesn't scale, misses things, and makes the data team a deployment bottleneck for "
+                                            'every product team.',
+                                       'C': "Correct — the layered defense: producers can't publish incompatible changes (registry compatibility "
+                                            'modes), contracts make expectations explicit and violations a *producer* bug, consumers read tolerantly '
+                                            '(ignore unknown fields, defaults for missing), and staging models localize the blast radius.',
+                                       'D': 'Wrong — schema-on-read-everything defers every failure to query time and silently degrades data '
+                                            "quality; you've traded loud breaks for quiet corruption."},
+               'explanation': '<p>Schema evolution is a producer-consumer coordination problem, solved with machinery, not vigilance: a '
+                              '<strong>schema registry</strong> enforcing compatibility (backward: new schema readable by old consumers — safe to '
+                              'deploy producers first; forward: the reverse; full: both) makes breaking changes fail at publish time; <strong>data '
+                              'contracts</strong> turn implicit expectations into owned, versioned agreements; <strong>tolerant readers</strong> + '
+                              'explicit staging mappings mean additive changes flow through and breaking ones fail in exactly one place. Renames '
+                              "deserve a special mention in interviews: semantically they're add-new + deprecate-old with a migration window — never "
+                              'an in-place break.</p>'},
+ 't-sysd-05': {'type': 'mcq',
+               'topic': 'Data Engineering System Design',
+               'subtopic': 'partitioning_scale',
+               'difficulty': 'Intermediate',
+               'tags': ['partitioning', 'scalability', 'hot_partition'],
+               'title': 'The hot partition',
+               'question': '<p>An events pipeline partitions its stream and storage by <code>customer_id</code>. One enterprise customer generates '
+                           '45% of all traffic; their partition lags and times out while others idle. Which redesign addresses the root cause?</p>',
+               'options': [{'key': 'A', 'text': 'Double the total partition count so every partition gets more capacity'},
+                           {'key': 'B',
+                            'text': 'Change the partition key to distribute the hot entity — e.g. composite key (customer_id, session_id or '
+                                    'hash-suffix) — accepting that per-customer ordering/aggregation now needs a downstream combine step'},
+                           {'key': 'C', 'text': "Move the hot customer's data to a bigger single machine"},
+                           {'key': 'D', 'text': "Rate-limit the hot customer's events at ingestion"}],
+               'correct_key': 'B',
+               'option_explanations': {'A': 'Wrong — hash(customer_id) still lands the hot customer on exactly one partition; more partitions make '
+                                            'the *other* partitions emptier without touching the hot one.',
+                                       'B': 'Correct — skew is a key-design problem: sharding the hot key across sub-partitions spreads the load, at '
+                                            'the honest cost of weakening per-key ordering/locality, which must be restored downstream where needed '
+                                            '(secondary aggregation, session-scoped keys).',
+                                       'C': 'A stopgap — vertical scaling has a ceiling and re-introduces a special-cased snowflake in the '
+                                            'architecture; the skew returns at the next growth step.',
+                                       'D': "Wrong — dropping or delaying a paying customer's data is a business decision masquerading as an "
+                                            'engineering fix; the pipeline should scale to the workload.'},
+               'explanation': '<p>Hot partitions are the distributed-systems version of the Spark skew problem, and the same logic applies: hashing '
+                              'distributes <em>keys</em>, not <em>load</em> — one giant key defeats any partition count. Fixes operate on the key: '
+                              'composite/salted keys spread a hot entity across N sub-partitions (with a downstream combine to restore per-entity '
+                              "aggregates), session- or time-scoped keys bound any single key's volume, and two-stage aggregation (partial per "
+                              'sub-partition, final per entity) is the standard restore pattern. The design habit worth naming in interviews: know '
+                              'your key distribution <em>before</em> choosing partition keys, and monitor per-partition lag/size so skew announces '
+                              'itself early.</p>'},
+ 't-sysd-06': {'type': 'mcq',
+               'topic': 'Data Engineering System Design',
+               'subtopic': 'cost_tradeoffs',
+               'difficulty': 'Advanced',
+               'tags': ['cost', 'precompute_vs_query', 'materialization'],
+               'title': 'Precompute or query on demand?',
+               'question': '<p>A metrics API serves p95 &lt; 200&nbsp;ms lookups of ~40 fixed metrics per customer per day. Underlying events: '
+                           'billions of rows. Two designs compete: (A) query the warehouse on each API call with cached results; (B) a batch job '
+                           'precomputes all customer-day metrics into a key-value store the API reads directly. Which analysis is correct?</p>',
+               'options': [{'key': 'A',
+                            'text': '(B) is the standard fit: fixed query shape + tight latency + high read volume favors precomputation into a '
+                                    "serving store; (A)'s warehouse-per-request model has cold-cache tail latencies, concurrency cost, and couples "
+                                    'API availability to warehouse availability — the trade-off flips only if queries are ad-hoc/unpredictable'},
+                           {'key': 'B', 'text': 'Both are wrong; the API should stream aggregates in real time from Kafka'},
+                           {'key': 'C', 'text': '(B) but with the warehouse itself as the serving store, since it already has the data'},
+                           {'key': 'D', 'text': '(A) is better: no precompute job to maintain, and caching solves latency'}],
+               'correct_key': 'A',
+               'option_explanations': {'A': 'Correct — the decision rule: known query shapes + strict latency + read-heavy = precompute and serve '
+                                            'from a store built for point reads. Ad-hoc flexibility is exactly what you give up, which is why '
+                                            'unpredictable analyst queries stay on the warehouse.',
+                                       'B': "Wrong — streaming aggregation adds real-time freshness these daily metrics don't need, at maximal "
+                                            'operational cost; it also still needs a serving store.',
+                                       'C': 'Wrong — warehouses are scan engines with per-query overhead and concurrency limits; sub-200ms point '
+                                            "lookups at API volume is the workload they're worst at per dollar.",
+                                       'D': "Wrong — cache misses hit the warehouse at interactive SLAs it isn't priced or shaped for; p95 includes "
+                                            'the cold paths, and warehouse concurrency under API traffic is expensive and jittery.'},
+               'explanation': '<p>This is the <strong>precompute-vs-query</strong> trade that shapes most serving designs: fixed, enumerable query '
+                              'shapes with strict latency and heavy read volume → batch-precompute into a point-read store (KV/OLTP/serving cache); '
+                              'exploratory, unpredictable shapes → query engines with elasticity. The costs to weigh out loud: precompute pays '
+                              'storage + a pipeline + staleness-until-next-run and can only answer what it anticipated; on-demand pays per-query '
+                              'compute and tail latency but answers anything. Hybrids (precompute the hot 40, fall back for the long tail) and the '
+                              'moving frontier (fast OLAP engines shrinking the gap) are the senior-level embellishments.</p>'},
+ 't-sysd-07': {'type': 'short_answer',
+               'topic': 'Data Engineering System Design',
+               'subtopic': 'end_to_end_design',
+               'difficulty': 'Intermediate',
+               'tags': ['pipeline_design', 'clickstream', 'requirements'],
+               'title': 'Design: clickstream analytics for a retailer',
+               'question': '<p>Design end-to-end clickstream analytics for an e-commerce site: ~200M events/day from web and mobile, consumers are '
+                           '(a) daily BI dashboards, (b) weekly ML training for recommendations, (c) a near-real-time (≤5&nbsp;min) ops view of site '
+                           'health. Walk through ingestion, storage, processing, and serving; name concrete technology *categories* (not brands) per '
+                           "stage; and state the two or three requirements you'd nail down before building anything.</p>",
+               'rubric': {'1': "Names a tool chain ('Kafka to Spark to warehouse') with no requirement analysis, no consumer-driven differentiation, "
+                               'and no failure/late-data consideration.',
+                          '3': 'Requirements first (freshness per consumer, retention, schema governance); event collection via SDK → gateway → '
+                               'durable log; raw events landed immutably to object storage (replay); batch transform to modeled tables for BI/ML; a '
+                               'parallel micro-batch/streaming aggregation for the 5-min ops view; serving split (warehouse+BI, files/feature access '
+                               'for ML, dashboard on pre-aggregates).',
+                          '5': 'All of 3, plus: dedupe/idempotency strategy (client event ids, at-least-once collection), event schema versioning at '
+                               'the gate, late/out-of-order handling for the ops aggregation (watermark) vs daily batch (closing-time convention), '
+                               'partitioning/layout of the raw store, backfill story from immutable raw, monitoring (lag, volume anomalies, schema '
+                               'violations), and an explicit note that the ops path computes a *small* subset of metrics rather than duplicating the '
+                               'whole pipeline in streaming.'},
+               'follow_up_probes': ['Where exactly does deduplication happen, and why do you need event ids from the client?',
+                                    'The ops view and the daily dashboard disagree for yesterday 23:55 — why, and is that acceptable?',
+                                    "Which single component's failure loses data permanently in your design, and how do you fix that?"],
+               'explanation': '<p>The reference shape: client SDKs emit versioned events with client-generated ids → collection endpoint → durable '
+                              'event log (absorbs bursts, decouples producers/consumers) → two consumers: (1) a loader landing raw events immutably '
+                              'to object storage (the replayable source of truth, partitioned by date), from which scheduled batch jobs build '
+                              'modeled tables (sessions, orders funnel) for BI and ML; (2) a lean streaming/micro-batch aggregator computing only '
+                              'the handful of ops metrics (traffic, error rates, conversion) with a watermark, serving a live dashboard. Serving: '
+                              'warehouse+BI for analysts, training-set extracts for ML, precomputed aggregates for ops. The senior touches: '
+                              'at-least-once collection + idempotent loads (event ids) rather than pretending exactly-once; late-data policy '
+                              'differing by path (ops view tolerates approximation; nightly batch closes books); and the small-streaming-surface '
+                              'principle — stream only what needs to be fresh.</p>'},
+ 't-sysd-08': {'type': 'short_answer',
+               'topic': 'Data Engineering System Design',
+               'subtopic': 'late_data_policy',
+               'difficulty': 'Advanced',
+               'tags': ['late_data', 'out_of_order', 'reconciliation', 'sla'],
+               'title': 'A coherent late-data policy',
+               'question': '<p>Mobile clients buffer events offline and sync when connectivity returns — sometimes days later. Metrics are reported '
+                           "daily, and finance treats published numbers as final. Design the organization's late-data policy: how event-time vs "
+                           "processing-time enters the design, what happens to a 3-day-late event, how 'final' numbers coexist with continuing "
+                           'arrivals, and how the policy differs for the ops dashboard vs the finance report. There is no single right answer — show '
+                           'the reasoning and the options.</p>',
+               'rubric': {'1': "'Just reprocess when late data arrives' or 'drop late events' with no event/processing-time distinction, no finality "
+                               'concept, no consumer differentiation.',
+                          '3': 'Distinguishes event time (when it happened — what metrics mean) from processing time (when it arrived); proposes a '
+                               'lateness horizon: within it, partitions are re-materialized (idempotent overwrite by event date); beyond it, events '
+                               'are quarantined or appended to a corrections ledger; recognizes finance finality vs ops approximation need different '
+                               'treatment.',
+                          '5': 'All of 3, plus a coherent finality protocol: publish preliminary → close the books at T+N (measured from the actual '
+                               'lateness distribution, not guessed) → post-close arrivals go to a corrections/adjustments series rather than '
+                               'mutating closed periods (mirroring accounting practice); ops dashboards simply always show latest state, no '
+                               'finality; mentions measuring the lateness CDF to choose N, storing both event and ingestion timestamps to enable '
+                               "audit ('as reported on date X' bitemporal reconstruction), and communicating restatement policy to stakeholders as "
+                               'part of the design.'},
+               'follow_up_probes': ['How do you empirically choose the close horizon N?',
+                                    "A regulator asks what the number 'was' when originally published — what does your storage need to answer that?",
+                                    'Why is mutating a closed period worse than publishing a correction, organizationally?'],
+               'explanation': '<p>The mature design accepts that with offline clients, <em>completeness is a function of waiting time</em>: measure '
+                              'the lateness distribution (what % of events arrive within 1h/1d/3d) and make the trade explicit. Store both event '
+                              'time (metric semantics) and ingestion time (audit/reprocessing). Policy skeleton: within a lateness horizon N, daily '
+                              "partitions are re-materialized idempotently as events arrive (numbers visibly 'settle'); at T+N the period "
+                              '<strong>closes</strong> — after that, arrivals post to a corrections series, and restatements are deliberate, '
+                              'communicated events, exactly like accounting adjustments. Consumers diverge on purpose: ops views track latest-known '
+                              "state with no finality; finance consumes closed periods + corrections. The bitemporal capability (reconstruct 'as we "
+                              "knew it then') is what turns arguments about changed dashboards into queries.</p>"},
+ 't-sysd-09': {'type': 'short_answer',
+               'topic': 'Data Engineering System Design',
+               'subtopic': 'ambiguous_tradeoff',
+               'difficulty': 'Advanced',
+               'tags': ['build_vs_buy', 'it_depends', 'platform_strategy'],
+               'title': "Kafka cluster or managed queue? (an 'it depends' question)",
+               'question': '<p>A 30-engineer company (2 data engineers) needs event transport for ~5,000 events/sec today, growing perhaps 10× in '
+                           "three years. One faction wants self-hosted Kafka ('industry standard, no lock-in'); another wants a fully-managed "
+                           "queue/stream service ('we're not in the infrastructure business'). Argue the decision like a senior engineer: the axes "
+                           'that matter, your recommendation with its conditions, and what facts would flip it.</p>',
+               'rubric': {'1': "Picks a side on ideology ('Kafka is standard' / 'managed is always better') without engaging team capacity, workload "
+                               'needs, or reversal conditions.',
+                          '3': "Correct axes: 2 DEs can't staff a 24/7 Kafka on-call (brokers, upgrades, rebalancing, DR); 5k eps is trivial for any "
+                               'option; ecosystem needs (connectors, stream processing, exact ordering/replay semantics) determine whether '
+                               'Kafka-specific capabilities are actually required; recommends managed (either managed-Kafka or native queue) for '
+                               'opex reasons with basic justification.',
+                          '5': 'All of 3, plus: sharpens the real choice into three options (self-hosted Kafka, managed Kafka, non-Kafka managed '
+                               'streams) and notes the middle option captures most ecosystem benefit without the ops; lock-in argument examined '
+                               'honestly (protocol-level portability of managed Kafka vs proprietary APIs; abstraction layers in producer/consumer '
+                               'code as cheap insurance); names flip conditions — needing long-retention replay + Kafka-ecosystem tooling '
+                               '(Connect/Flink), compliance requiring self-hosting, cost at 10× scale, or hiring a platform team; frames it as a '
+                               'people-and-focus decision at this size, with a stated revisit trigger.'},
+               'follow_up_probes': ['What does operating Kafka actually involve week-to-week that a managed service absorbs?',
+                                    'How would you keep application code portable across transports, concretely?',
+                                    "At what scale or team size does self-hosting start to pay, and what's the migration cost then?"],
+               'explanation': '<p>The senior move is separating <em>capability requirements</em> (throughput — trivial here; ordering, '
+                              'retention/replay, ecosystem connectors) from <em>operating model</em> (who wakes up at 3am for a broker disk). With '
+                              "two data engineers, self-hosting a distributed log is a part-time job the team doesn't have — so the honest contest "
+                              'is <strong>managed Kafka vs managed native streams</strong>, decided by whether Kafka-specific ecosystem (Connect, '
+                              'ksql/Flink integrations, long replay) is genuinely needed. Lock-in deserves nuance, not slogans: managed Kafka keeps '
+                              'protocol portability; either way, a thin internal producer/consumer abstraction is cheap insurance. State the flip '
+                              "conditions (compliance, 10×-scale economics, a future platform team) and a revisit trigger — 'it depends, and here is "
+                              "exactly on what' is the answer being graded.</p>"},
+ 't-sysd-10': {'type': 'short_answer',
+               'topic': 'Data Engineering System Design',
+               'subtopic': 'reliability_operations',
+               'difficulty': 'Advanced',
+               'tags': ['observability', 'sla', 'data_downtime', 'incident'],
+               'title': 'Making a pipeline operable: SLAs, monitoring, incident response',
+               'question': "<p>Your team's pipelines feed the exec dashboard, and this quarter it has silently shown stale or wrong numbers three "
+                           'times — each discovered by the CFO before the team. Design the operability layer: what you monitor (name the categories '
+                           'with examples), how SLAs/SLOs are defined for data, what alerts fire and to whom, and what changes organizationally so '
+                           'consumers never discover incidents first again.</p>',
+               'rubric': {'1': "'Add alerts when jobs fail' — misses that all three incidents were *silent*: jobs succeeded while data was wrong or "
+                               'stale.',
+                          '3': 'Monitors beyond job status: freshness (data landed by expected time), volume (row counts vs expected range), quality '
+                               '(nulls, duplicates, constraint violations), schema changes; defines freshness/quality SLOs per table tier; alerts '
+                               'routed to the owning team with runbooks.',
+                          '5': 'All of 3, plus: distinguishes pipeline health from *data* health (a green DAG can deliver garbage); anomaly-based '
+                               'volume/distribution checks catching upstream silent failures; lineage-aware alerting (know which dashboards a broken '
+                               'table feeds, notify consumers proactively with status pages/annotations on the dashboard itself); severity tiers '
+                               'tied to consumer impact; incident process with postmortems feeding new checks; contracts/ownership so upstream '
+                               "breakage pages the upstream team; measures 'time to detection' as the KPI that the CFO stories were really about."},
+               'follow_up_probes': ['A job succeeds but loads half the usual rows — which check catches it and how do you avoid alert noise on '
+                                    'natural variance?',
+                                    'How does lineage change who gets paged and what consumers see?',
+                                    "What's in a data incident postmortem that's different from a service postmortem?"],
+               'explanation': '<p>The unifying insight: <strong>job success is not data success</strong> — the three silent incidents are freshness '
+                              'and correctness failures invisible to DAG-status monitoring. The observability stack: <em>freshness</em> '
+                              '(landed-by-time per table, vs SLO), <em>volume</em> (counts/bytes vs seasonal expectation, anomaly-flagged), '
+                              '<em>quality</em> (declarative checks: nulls, uniqueness, referential integrity, accepted ranges — run as gates, not '
+                              'just reports), <em>schema</em> (drift detection), <em>lineage</em> (blast-radius resolution: which marts and '
+                              'dashboards inherit the problem). SLOs are tiered by consumer criticality; alerts page the owning team with runbooks, '
+                              'and — the organizational fix — consumer-facing status (dashboard annotations, a data status page, proactive '
+                              'notifications) so the CFO reads "known incident, ETA 2pm" instead of discovering it. Postmortems close the loop by '
+                              'converting each incident into a new automated check; the KPI to drive down is time-to-detection relative to consumer '
+                              'discovery.</p>'},
+ 't-aws-01': {'type': 'mcq',
+              'topic': 'AWS',
+              'subtopic': 'service_selection_query',
+              'difficulty': 'Intermediate',
+              'tags': ['athena', 'redshift', 's3', 'query_engines'],
+              'title': 'Athena or Redshift?',
+              'question': '<p>A team has 50&nbsp;TB of Parquet on S3. Analysts run ~30 ad-hoc exploratory queries a day; there is also a set of BI '
+                          'dashboards issuing thousands of repetitive aggregate queries daily with interactive-latency expectations. What is the '
+                          'sound AWS-native split?</p>',
+              'options': [{'key': 'A',
+                           'text': 'Athena for the ad-hoc exploration over S3; Redshift (or another always-on warehouse layer) for the '
+                                   'high-concurrency, latency-sensitive dashboard workload — matching per-query-scan pricing to sporadic use and '
+                                   'provisioned capacity to constant use'},
+                          {'key': 'B', 'text': 'Redshift for everything — a real warehouse beats a query service'},
+                          {'key': 'C', 'text': 'Export the data to RDS Postgres, since dashboards need an OLTP database'},
+                          {'key': 'D', 'text': 'Athena for everything — serverless means no cost when idle'}],
+              'correct_key': 'A',
+              'option_explanations': {'A': 'Correct — the workload split is the point: sporadic, unpredictable scanning fits pay-per-query over the '
+                                           'lake; constant, repetitive, latency-bound querying fits provisioned/warehouse capacity with result '
+                                           'caching and tuned tables.',
+                                      'B': 'Wrong for the exploration — keeping cluster capacity (or paying serverless RPU floors) for 30 sporadic '
+                                           'queries/day wastes the elasticity S3+Athena gives nearly free.',
+                                      'C': 'Wrong — 50 TB of analytics in row-store RDS is the OLTP/OLAP mismatch again; dashboards are aggregate '
+                                           'scans, not transactional point reads.',
+                                      'D': 'Wrong for the dashboards — per-TB-scanned pricing on thousands of repetitive queries gets expensive '
+                                           "fast, and Athena's shared-pool latency/concurrency behavior is a poor fit for interactive BI SLAs."},
+              'explanation': '<p>The recurring AWS decision: <strong>Athena</strong> = serverless Presto/Trino over S3, priced per TB scanned — '
+                             'ideal for sporadic, exploratory, lake-resident querying (make it cheap with Parquet + partitioning + compression, '
+                             'which cut scanned bytes 10–100×). <strong>Redshift</strong> = a warehouse with provisioned (or serverless-but-floored) '
+                             'capacity — earns its cost under sustained concurrency, repetitive shapes, caching, and modeling. The pattern that '
+                             'survives interviews: lake + Athena for breadth and exploration; a warehouse tier for the hot, contractual, interactive '
+                             'workloads; both reading the same S3 truth (Spectrum/external tables blur the line further).</p>'},
+ 't-aws-02': {'type': 'mcq',
+              'topic': 'AWS',
+              'subtopic': 'glue_vs_emr',
+              'difficulty': 'Intermediate',
+              'tags': ['glue', 'emr', 'spark', 'managed_services'],
+              'title': 'Glue or EMR for Spark?',
+              'question': '<p>Two Spark needs at one company: (1) a dozen nightly ETL jobs, each &lt; 30 min, maintained by a small '
+                          'analytics-engineering team that wants minimal infrastructure work; (2) a research group running continuous, '
+                          'heavily-customized Spark/Iceberg workloads needing specific library versions, spot-instance strategies, and cluster-level '
+                          'tuning. Best-fit mapping?</p>',
+              'options': [{'key': 'A', 'text': 'Both on self-managed Spark on EC2 for maximum flexibility'},
+                          {'key': 'B', 'text': 'Both on Glue — EMR is legacy technology AWS is sunsetting'},
+                          {'key': 'C',
+                           'text': '(1) Glue jobs — serverless Spark with catalog integration and per-job billing; (2) EMR — full cluster control, '
+                                   'custom AMIs/bootstrap, spot fleets, and long-running or transient clusters under your tuning authority'},
+                          {'key': 'D', 'text': '(1) EMR, (2) Glue — Glue is the more powerful option and belongs with the advanced team'}],
+              'correct_key': 'C',
+              'option_explanations': {'A': 'Wrong — self-managing Spark on raw EC2 buys the most operational burden for benefits neither team asked '
+                                           'for.',
+                                      'B': "Wrong — EMR is actively developed (EMR on EKS, EMR Serverless); 'sunsetting' is fabricated.",
+                                      'C': "Correct — Glue trades control for zero cluster management: right for scheduled ETL by teams who don't "
+                                           'want to own infrastructure. EMR trades management burden for full control: right for teams whose '
+                                           'workloads justify tuning clusters, versions, and spot economics.',
+                                      'D': "Wrong — inverted: Glue's constraints (runtime versions, limited cluster-level control, per-DPU pricing) "
+                                           'are exactly what the research group would fight daily.'},
+              'explanation': '<p>The Glue-vs-EMR axis is <strong>managed-ness vs control</strong>, the same axis as most AWS choices. '
+                             '<strong>Glue</strong>: serverless Spark jobs + the Glue Data Catalog (the metastore glue of the lake stack) + '
+                             'crawlers; per-DPU-hour billing; minimal knobs — perfect for scheduled ETL owned by lean teams. <strong>EMR</strong>: '
+                             'real clusters (EC2/EKS/Serverless flavors), any framework versions, bootstrap actions, spot fleets, cluster-level '
+                             'tuning — for sustained, custom, or cost-engineered big-data workloads. The senior addendum: catalog centralization '
+                             'matters more than engine choice — Glue Catalog shared by Athena/EMR/Redshift Spectrum is what keeps the lake '
+                             'coherent.</p>'},
+ 't-aws-03': {'type': 'mcq',
+              'topic': 'AWS',
+              'subtopic': 'kinesis_vs_msk',
+              'difficulty': 'Intermediate',
+              'tags': ['kinesis', 'msk', 'streaming_transport'],
+              'title': 'Kinesis or MSK for event transport?',
+              'question': '<p>A team must choose AWS-native event transport for ~20&nbsp;MB/s of clickstream, consumed by a Flink job and archived '
+                          'to S3. They have no existing Kafka expertise and want low operational burden, but a sister team already runs '
+                          "producers/consumers written against the Kafka protocol that they hope to reuse. What's the fair framing?</p>",
+              'options': [{'key': 'A', 'text': 'MSK is strictly better since Kafka is the industry standard'},
+                          {'key': 'B', 'text': 'Neither — SQS is equivalent and simpler for this use case'},
+                          {'key': 'C', 'text': "Kinesis is strictly better since it's serverless"},
+                          {'key': 'D',
+                           'text': 'Kinesis Data Streams: fully managed, shard-based, native AWS integrations (Firehose to S3, Lambda, managed '
+                                   'Flink) — least ops; MSK: managed Kafka brokers preserving full protocol/ecosystem compatibility (reuse the '
+                                   "sister team's clients) but with more infrastructure surface (broker sizing, storage, upgrades even if "
+                                   'automated). Choose on ecosystem reuse vs minimal ops'}],
+              'correct_key': 'D',
+              'option_explanations': {'A': "Wrong — 'standard' isn't a requirement; if the Kafka ecosystem isn't needed, MSK's extra operational "
+                                           'surface buys nothing.',
+                                      'B': 'Wrong — SQS is a message queue: no ordered, replayable, multi-consumer log semantics; a Flink job '
+                                           're-reading history and an archive consumer need a log, not a queue.',
+                                      'C': "Wrong — serverless-ness isn't decisive either; discarding working Kafka clients and connector "
+                                           'investments has real cost.',
+                                      'D': 'Correct — this is the actual trade: Kinesis minimizes operational surface and wires natively into '
+                                           'Firehose/Lambda/managed Flink; MSK buys Kafka-protocol compatibility and ecosystem reuse at the cost of '
+                                           'broker-shaped operations. Both handle 20 MB/s easily.'},
+              'explanation': "<p>Kinesis vs MSK is AWS's local version of managed-native vs managed-Kafka. <strong>Kinesis</strong>: shard-based "
+                             'throughput units, retention up to a year, tight native integrations (Firehose delivery to S3/warehouse, Lambda '
+                             "triggers, Managed Flink) — the least-ops path when you're AWS-native and ecosystem-agnostic. <strong>MSK</strong>: "
+                             'actual Kafka — protocol compatibility, Connect/consumer-group ecosystem, existing client reuse — with broker-level '
+                             'realities (sizing, storage scaling, version upgrades) even in managed form (MSK Serverless narrows this). Decide on '
+                             'ecosystem gravity and portability needs, not slogans; and know why SQS is disqualified — queues delete on consume, '
+                             'logs retain and replay for many consumers.</p>'},
+ 't-aws-04': {'type': 'mcq',
+              'topic': 'AWS',
+              'subtopic': 'lambda_limits',
+              'difficulty': 'Intermediate',
+              'tags': ['lambda', 'step_functions', 'orchestration', 'limits'],
+              'title': 'When Lambda is the wrong compute',
+              'question': '<p>A data engineer implements a nightly transformation as an AWS Lambda that reads ~40&nbsp;GB from S3, aggregates it in '
+                          'pandas, and writes results back. It works in dev on a sample, then fails in prod. Which pair of Lambda constraints makes '
+                          'this architecture fundamentally wrong, and what is the conventional fix?</p>',
+              'options': [{'key': 'A',
+                           'text': 'The 15-minute execution cap and ~10 GB memory ceiling make single-invocation big-data processing infeasible; fix '
+                                   'by moving the heavy lifting to batch compute (Glue/EMR/ECS-Fargate/Athena SQL) — orchestrated, if needed, by '
+                                   'Step Functions — and keep Lambda for glue/trigger logic'},
+                          {'key': 'B', 'text': 'Lambda cold starts corrupt pandas DataFrames; fix with provisioned concurrency'},
+                          {'key': 'C', 'text': 'Lambda cannot read from S3 in production accounts; fix with a VPC endpoint'},
+                          {'key': 'D', 'text': 'Lambda cannot install pandas; fix by vendoring it in a container image'}],
+              'correct_key': 'A',
+              'option_explanations': {'A': 'Correct — 15 minutes max runtime and ~10 GB max memory are hard walls; 40 GB in pandas in one invocation '
+                                           'exceeds both. The pattern: Lambda for event-driven glue (triggering, small transforms, notifications), '
+                                           'real batch engines for volume, Step Functions for the workflow.',
+                                      'B': "Wrong — cold starts add latency; they don't corrupt anything.",
+                                      'C': 'Wrong — Lambda reads S3 fine with IAM permissions; VPC endpoints are a networking concern, not the '
+                                           'failure here.',
+                                      'D': "Wrong — pandas deploys fine via layers or container images; packaging isn't the constraint that matters "
+                                           'at 40 GB.'},
+              'explanation': "<p>Lambda's box: ≤15 min, ≤~10 GB RAM, ephemeral storage limits, per-invocation billing — superb for event-driven glue "
+                             '(S3-arrival triggers, small per-object transforms, fan-out, notifications), wrong for monolithic large-scale '
+                             "processing. The architecture smell is 'the whole nightly job inside one function'. Conventional shape: <strong>Step "
+                             'Functions</strong> orchestrates (state, retries with backoff, error routing, human-visible execution history), '
+                             'invoking the right compute per step — Glue/EMR for Spark-scale transforms, Athena for SQL-shaped aggregation, Fargate '
+                             "for containerized medium jobs, Lambda only where its event-glue nature fits. Knowing each service's box, and composing "
+                             'rather than forcing, is exactly what AWS-flavored DE interviews probe.</p>'},
+ 't-aws-05': {'type': 'mcq',
+              'topic': 'AWS',
+              'subtopic': 's3_storage_classes',
+              'difficulty': 'Intermediate',
+              'tags': ['s3', 'storage_classes', 'lifecycle', 'cost'],
+              'title': 'Tiering two years of raw events',
+              'question': '<p>A lake keeps raw event data: the last 30 days are read daily by pipelines; days 31–365 are queried a few times a month '
+                          'for backfills; years 1–2 are kept for compliance and touched perhaps once a year, but must be retrievable within hours '
+                          'when audited. Which S3 setup is right?</p>',
+              'options': [{'key': 'A',
+                           'text': 'Lifecycle policy: Standard for the hot 30 days → Standard-IA (or Intelligent-Tiering) for the warm year → '
+                                   'Glacier Flexible Retrieval for the compliance tail; never Glacier Deep Archive here since its retrieval can '
+                                   'exceed the hours-level audit requirement'},
+                          {'key': 'B', 'text': 'Move everything older than 30 days straight to Glacier Deep Archive for maximum savings'},
+                          {'key': 'C', 'text': 'Compress the old data harder instead of changing storage classes'},
+                          {'key': 'D', 'text': 'Everything in S3 Standard — retrieval fees on other classes make them a trap'}],
+              'correct_key': 'A',
+              'option_explanations': {'A': 'Correct — tiers matched to access frequency and the retrieval-time requirement: IA charges retrieval but '
+                                           'caps at Standard-like latency for monthly touches; Glacier Flexible restores in minutes-to-hours, '
+                                           'satisfying the audit SLA; Intelligent-Tiering automates the warm boundary when access patterns are '
+                                           'uncertain.',
+                                      'B': "Wrong — Deep Archive restores in ~12–48 hours, which can violate the 'within hours' audit requirement; "
+                                           "savings that break the requirement aren't savings.",
+                                      'C': "Wrong — compression helps every tier equally and is orthogonal; it doesn't address the per-GB-month "
+                                           'class pricing at all.',
+                                      'D': 'Wrong — paying Standard rates on two years of once-a-year data is the single most common S3 bill '
+                                           'inflator; IA/Glacier exist precisely for this shape.'},
+              'explanation': '<p>S3 cost design = matching class economics to access reality: <strong>Standard</strong> (hot, no retrieval fees) → '
+                             '<strong>Standard-IA</strong> (cheaper storage, per-GB retrieval fee, same-milliseconds access; minimum storage '
+                             'duration applies) → <strong>Glacier Instant / Flexible / Deep Archive</strong> (progressively cheaper, retrieval '
+                             'progressively slower and costlier). <strong>Intelligent-Tiering</strong> auto-moves objects between tiers for a small '
+                             'monitoring fee — the safe default when patterns are unknown. Lifecycle rules automate transitions and expirations. The '
+                             'two classic mistakes the distractors encode: hot-pricing cold data, and archiving below your retrieval SLA. Bonus '
+                             'points for mentioning minimum object-size/duration charges (tiny objects tier badly — another reason to compact).</p>'},
+ 't-aws-06': {'type': 'mcq',
+              'topic': 'AWS',
+              'subtopic': 'firehose_vs_streams',
+              'difficulty': 'Intermediate',
+              'tags': ['kinesis_firehose', 'kinesis_streams', 'delivery'],
+              'title': 'Streams or Firehose?',
+              'question': '<p>Two requirements: (1) land clickstream events into S3 as batched, compressed Parquet with minimal engineering — no '
+                          'custom consumers wanted; (2) feed the same events to a custom Flink application maintaining per-user session state with '
+                          "replay ability after deploys. Which service maps to which, and why can't one service cover both roles?</p>",
+              'options': [{'key': 'A', 'text': 'Streams for both — Firehose is just a deprecated wrapper over Streams'},
+                          {'key': 'B', 'text': 'SNS for (1) and SQS for (2)'},
+                          {'key': 'C', 'text': 'Firehose for both — Flink can read directly from Firehose'},
+                          {'key': 'D',
+                           'text': "Firehose for (1): fully-managed delivery with buffering, format conversion, and compression into S3 — but it's a "
+                                   'delivery pipe, not a durable consumable log. Streams for (2): a retained, replayable, multi-consumer log that '
+                                   'stateful processors can re-read. Commonly: Streams as the source, with Firehose attached as one delivery '
+                                   'consumer'}],
+              'correct_key': 'D',
+              'option_explanations': {'A': "Wrong — Firehose isn't deprecated and does real work Streams doesn't: managed buffering, format "
+                                           'conversion, and delivery without a single line of consumer code.',
+                                      'B': 'Wrong — SNS fan-out and SQS queues have neither ordered replayable retention nor the S3-Parquet delivery '
+                                           'machinery; both roles are mis-served.',
+                                      'C': "Wrong — Firehose has no consumer API to 'read from'; it pushes to configured destinations only. A custom "
+                                           "processor can't attach to it.",
+                                      'D': 'Correct — Firehose is exactly the no-code S3/warehouse delivery service (buffer by size/time, convert to '
+                                           'Parquet, compress, partition); it offers no replayable retention or arbitrary consumers. Streams is the '
+                                           'log: retention, ordered shards, checkpointed re-reads — what a stateful Flink app needs. Attaching '
+                                           'Firehose to Streams gives both from one source.'},
+              'explanation': '<p>The distinction interviews test: <strong>Kinesis Data Streams</strong> is a <em>log</em> — shards, ordering per '
+                             'key, retention (up to a year), multiple independent consumers, replay from any position: the substrate for custom and '
+                             'stateful processing. <strong>Data Firehose</strong> is a <em>delivery service</em> — zero-code buffered loading into '
+                             'S3/Redshift/OpenSearch/HTTP with Parquet conversion, compression, dynamic partitioning, and inline Lambda transforms; '
+                             'you cannot consume from it. The standard composition is Streams (source of truth, feeds Flink/Lambda/custom apps) with '
+                             'Firehose subscribed as the archival consumer — one ingest, both capabilities.</p>'},
+ 't-aws-07': {'type': 'short_answer',
+              'topic': 'AWS',
+              'subtopic': 'lake_architecture',
+              'difficulty': 'Advanced',
+              'tags': ['s3', 'glue_catalog', 'athena', 'lake_design'],
+              'title': 'Design an AWS-native data lake',
+              'question': '<p>Design an AWS-native data lake for a company ingesting (a) nightly RDS exports, (b) clickstream via Kinesis, (c) '
+                          'vendor CSVs dropped to SFTP. Consumers: Athena ad-hoc SQL, a Glue/EMR Spark ETL layer, and QuickSight dashboards. Cover: '
+                          'bucket/prefix and zone layout, catalog strategy, file formats and layout, ingestion per source, security posture, and the '
+                          "cost controls you'd bake in from day one.</p>",
+              'rubric': {'1': "'Put files in S3 and query with Athena' — no zones, no catalog thinking, no per-source ingestion design, no cost or "
+                              'security posture.',
+                         '3': 'Zoned layout (raw/curated/marts) with per-zone buckets or prefixes; Glue Catalog as the shared metastore (crawlers or '
+                              'explicit DDL); raw kept as-landed, curated in partitioned Parquet; per-source paths (DMS or snapshot export for RDS, '
+                              'Firehose for clickstream, Transfer Family/Lambda for SFTP CSVs); IAM-based access by zone; partitioning + compression '
+                              'as Athena cost control.',
+                         '5': 'All of 3, plus: explicit catalog governance (schemas as code over crawler sprawl for curated zones; Lake Formation '
+                              'for fine-grained/row-level permissions if multi-team); table format (Iceberg) for the curated zone with compaction — '
+                              'and why (atomic writes from multiple engines, schema evolution); lifecycle tiering per zone; Athena workgroups with '
+                              'per-workgroup scan limits/budgets; partition projection or partition indexes at scale; encryption (SSE-KMS) + bucket '
+                              'policies + no public access as defaults; cost framing: scanned-bytes economics drive format/partition discipline.'},
+              'follow_up_probes': ['Crawlers vs schema-as-code for the curated zone — where does each belong and why?',
+                                   'How does Lake Formation change the permission model versus raw IAM bucket policies?',
+                                   'A QuickSight dashboard suddenly costs $400/day in Athena scans — what are the three most likely causes and '
+                                   'fixes?'],
+              'explanation': '<p>Reference design: three zones — <strong>raw</strong> (immutable as-landed, lifecycle-tiered aggressively), '
+                             '<strong>curated</strong> (typed, partitioned Parquet — ideally Iceberg for atomic multi-engine writes, schema '
+                             'evolution, compaction), <strong>marts</strong> (consumer-shaped). Ingestion per source: DMS/CDC or snapshot exports '
+                             'for RDS; Kinesis→Firehose with Parquet conversion and dynamic partitioning for clickstream; Transfer Family + '
+                             'event-triggered Lambda validation for vendor SFTP drops. The <strong>Glue Catalog</strong> is the load-bearing shared '
+                             'metastore for Athena/Spark/QuickSight — crawlers are fine for discovery in raw, but curated schemas should be '
+                             'code-managed (crawler drift breaks consumers); Lake Formation adds table/column/row-level grants when multiple teams '
+                             "share the lake. Cost controls from day one: partitioning + Parquet + compression (they cut Athena's per-TB-scanned "
+                             'bill 10–100×), Athena workgroups with scan limits, S3 lifecycle policies, and monitoring scanned-bytes per query as a '
+                             'first-class metric.</p>'},
+ 't-aws-08': {'type': 'short_answer',
+              'topic': 'AWS',
+              'subtopic': 'cost_optimization',
+              'difficulty': 'Advanced',
+              'tags': ['cost', 'spot_instances', 's3_cost', 'warehouse_cost'],
+              'title': 'Cut this AWS data bill',
+              'question': '<p>You inherit a data platform spending $85k/month: EMR clusters running 24/7 on on-demand instances (~$30k), an '
+                          'oversized always-on Redshift cluster (~$25k), S3 with 2&nbsp;PB entirely in Standard (~$20k), and Athena spend from '
+                          'analysts querying raw JSON (~$10k). For each line: diagnose the likely waste, give the fix, estimate the magnitude of '
+                          'saving, and note the risk each fix introduces.</p>',
+              'rubric': {'1': "Generic 'use spot instances and delete old data' without engaging each line item or naming risks.",
+                         '3': 'EMR: transient job-scoped clusters + spot for task nodes (interruption risk on long jobs); Redshift: right-size, '
+                              'pause/resume or move bursty workloads off, consider RA3/serverless (migration/perf-regression risk); S3: lifecycle to '
+                              'IA/Glacier by access pattern (retrieval fees/latency risk); Athena: convert raw JSON to partitioned Parquet (one-time '
+                              'conversion cost, pipeline change) — with rough per-line savings estimates.',
+                         '5': 'All of 3, with sophistication: EMR — spot only for task nodes not core/master, instance fleets, EMR Serverless for '
+                              'spiky jobs; auto-termination policies; Redshift — workload analysis first (concurrency vs scan volume), '
+                              'reserved/committed pricing for the steady floor, result caching, offload cold data via Spectrum; S3 — '
+                              'Intelligent-Tiering or Storage Class Analysis before blanket rules, small-object compaction so tiering works, '
+                              'versioning/incomplete-multipart cleanup; Athena — 10-100× scan reduction from Parquet+partitioning quantified, '
+                              'workgroup scan caps; overall: measure first (CUR/Cost Explorer, tags), sequence by effort-to-impact, and define '
+                              "regression guardrails (SLA monitors) so savings don't silently degrade reliability."},
+              'follow_up_probes': ['Why not run EMR master/core nodes on spot too?',
+                                   'How do you decide between pausing Redshift nights/weekends vs migrating to serverless?',
+                                   'What breaks operationally when 2 PB moves to IA and a backfill re-reads a year of it?'],
+              'explanation': '<p>Each line has a signature waste. <strong>EMR 24/7 on-demand</strong>: batch clusters idle between jobs — move to '
+                             'transient job-scoped clusters with auto-termination; spot for task nodes (core/master stay on-demand — losing them '
+                             'kills the cluster, losing task nodes just re-runs work); typically 50–70% off. <strong>Always-on oversized '
+                             'Redshift</strong>: measure the workload — steady floor goes to reserved pricing, bursty analytics to pause/resume or '
+                             'serverless, cold history behind Spectrum; 30–50%. <strong>2 PB flat Standard</strong>: run Storage Class Analysis, '
+                             'then lifecycle policies (or Intelligent-Tiering) — with the caveats that small objects and retrieval-heavy backfills '
+                             'change the math; 40–60% on the cold majority. <strong>Athena on raw JSON</strong>: the biggest ratio win — columnar '
+                             'Parquet + partitioning cuts scanned bytes 10–100×, plus workgroup scan caps as guardrails. Meta-lesson for interviews: '
+                             'measure (tags, CUR) → sequence by effort-to-impact → attach a reliability guardrail to every saving.</p>'},
+ 't-stream-01': {'type': 'mcq',
+                 'topic': 'Batch & Live Streaming',
+                 'subtopic': 'kafka_fundamentals',
+                 'difficulty': 'Intermediate',
+                 'tags': ['kafka', 'partitions', 'ordering', 'consumer_groups'],
+                 'title': 'Kafka ordering guarantees',
+                 'question': '<p>An order-processing system publishes order events to a 12-partition Kafka topic and requires that events for the '
+                             'same order are processed in the sequence they occurred. Which statement about achieving this is correct?</p>',
+                 'options': [{'key': 'A',
+                              'text': "Ordering holds only within a partition; produce with order_id as the message key so all of an order's events "
+                                      'hash to the same partition and arrive in order to a single consumer'},
+                             {'key': 'B', 'text': 'Set the consumer group to a single consumer, which restores global order across partitions'},
+                             {'key': 'C', 'text': 'Kafka guarantees global ordering across the topic, so nothing special is needed'},
+                             {'key': 'D', 'text': 'Enable idempotent producers, which guarantees ordered delivery to consumers'}],
+                 'correct_key': 'A',
+                 'option_explanations': {'A': "Correct — per-partition ordering is Kafka's contract; keying by order_id pins each order's events to "
+                                              'one partition (and each partition to one consumer within a group), giving per-order sequence. This is '
+                                              'the canonical design.',
+                                         'B': 'Wrong — a single consumer still reads partitions interleaved with no cross-partition sequence '
+                                              "guarantee; you'd sacrifice all parallelism and still not get global order.",
+                                         'C': 'Wrong — there is no cross-partition ordering; 12 partitions means 12 independent ordered sequences.',
+                                         'D': 'Wrong — idempotent producers prevent duplicates/reordering *from producer retries within a '
+                                              "partition*; they don't create cross-partition ordering."},
+                 'explanation': '<p>The Kafka ordering model in one line: <strong>order is guaranteed per partition, and only per '
+                                'partition</strong>. Entity-level ordering therefore comes from key choice — hash(key) → partition, so keying by '
+                                'order_id serializes each order while different orders process in parallel across partitions. Consequences worth '
+                                'volunteering: partition count changes remap keys (plan it, or over-provision partitions up front); a hot key '
+                                'concentrates load (the skew conversation); and within a consumer group each partition is owned by exactly one '
+                                'consumer, which is what makes the per-key sequence actually processed in order.</p>'},
+ 't-stream-02': {'type': 'mcq',
+                 'topic': 'Batch & Live Streaming',
+                 'subtopic': 'consumer_groups_offsets',
+                 'difficulty': 'Intermediate',
+                 'tags': ['consumer_group', 'offsets', 'rebalance', 'lag'],
+                 'title': 'Consumer groups, offsets, and lag',
+                 'question': '<p>A 12-partition topic is consumed by a consumer group with 4 members. Monitoring shows consumer lag steadily growing '
+                             'on all partitions. Which statement is true?</p>',
+                 'options': [{'key': 'A', 'text': 'Setting a smaller commit interval will reduce the lag'},
+                             {'key': 'B',
+                              'text': 'Adding consumers up to 12 will increase parallelism (3 partitions each → 1 each); beyond 12, extra consumers '
+                                      'idle — and if per-message processing is the bottleneck, work must also be made faster or moved off the '
+                                      'consumer thread'},
+                             {'key': 'C', 'text': 'Adding consumers beyond 12 keeps helping because Kafka splits partitions dynamically among them'},
+                             {'key': 'D', 'text': 'Lag is a broker-side problem; consumers cannot influence it'}],
+                 'correct_key': 'B',
+                 'option_explanations': {'A': 'Wrong — commit interval affects how often progress is recorded (and replay size after a crash), not '
+                                              'how fast messages are processed.',
+                                         'B': 'Correct — each partition is assigned to exactly one group member, so useful parallelism caps at '
+                                              'partition count; growing lag on all partitions means consumption < production, fixed by more '
+                                              'consumers (up to 12), faster processing, or repartitioning the topic higher.',
+                                         'C': 'Wrong — partitions are the unit of assignment; a 13th consumer in the group sits idle. (Splitting a '
+                                              "partition's *data* among consumers doesn't exist.)",
+                                         'D': "Wrong — lag = produced offsets minus committed offsets; it's precisely the consumer side's throughput "
+                                              'deficit.'},
+                 'explanation': "<p>Mechanics every DE should have cold: a <strong>consumer group</strong> divides a topic's partitions among its "
+                                'members (one owner per partition); <strong>offsets</strong> are per-partition positions committed by the group '
+                                '(progress bookmarks, controlling replay-after-crash); <strong>lag</strong> = latest offset − committed offset, the '
+                                'canonical health metric. Scaling levers in order: consumers up to partition count → per-message processing speed '
+                                '(batching, async IO, moving heavy work out) → topic repartitioning (with the key-remap caveat). Also useful: '
+                                'rebalances pause consumption — frequent joins/leaves (or slow poll loops triggering session timeouts) cause lag '
+                                'sawtooths that look like throughput problems but are stability problems.</p>'},
+ 't-stream-03': {'type': 'mcq',
+                 'topic': 'Batch & Live Streaming',
+                 'subtopic': 'delivery_semantics_kafka',
+                 'difficulty': 'Advanced',
+                 'tags': ['at_least_once', 'offset_commit', 'duplicates'],
+                 'title': 'Where duplicates come from',
+                 'question': '<p>A consumer processes messages by writing to a database and auto-commits offsets every 5 seconds. It crashes and '
+                             'restarts. Which duplicate/loss behavior does this configuration produce?</p>',
+                 'options': [{'key': 'A',
+                              'text': 'Possible duplicates: messages processed after the last commit are re-delivered on restart and re-written to '
+                                      'the database (at-least-once) — and if commits ever ran ahead of processing (commit-then-process), messages '
+                                      'could instead be lost (at-most-once)'},
+                             {'key': 'B', 'text': 'Guaranteed loss of the last 5 seconds of messages'},
+                             {'key': 'C', 'text': 'Neither duplicates nor loss, provided the consumer group has more than one member'},
+                             {'key': 'D', 'text': "Exactly-once: Kafka's auto-commit coordinates with the database automatically"}],
+                 'correct_key': 'A',
+                 'option_explanations': {'A': 'Correct — process-then-commit yields re-delivery of the uncommitted tail after a crash (duplicates at '
+                                              'the sink unless writes are idempotent); the inverted order yields loss instead. This asymmetry *is* '
+                                              'the at-least-once / at-most-once distinction in practice.',
+                                         'B': "Wrong — loss isn't guaranteed; with process-then-commit the tail is re-processed, not dropped.",
+                                         'C': "Wrong — group size is orthogonal; each partition's commit/processing race exists regardless of member "
+                                              'count.',
+                                         'D': 'Wrong — Kafka knows nothing of the database transaction; no coordination exists unless you build it '
+                                              '(transactional outbox, idempotent writes, or Kafka-transactions when the sink is Kafka).'},
+                 'explanation': '<p>Delivery semantics come down to the order of two operations: <strong>process</strong> (side effect) and '
+                                '<strong>commit</strong> (record progress). Process-then-commit → crash re-delivers the uncommitted tail → '
+                                '<em>at-least-once</em>, duplicates at the sink. Commit-then-process → crash skips what was committed but '
+                                'unprocessed → <em>at-most-once</em>, loss. Exactly-once <em>effects</em> require binding the two: idempotent sink '
+                                'writes keyed by event id (the workhorse), transactional outbox patterns, or Kafka transactions when the output is '
+                                "Kafka. Auto-commit's 5-second granularity just sizes the duplicate window; turning it off and committing after "
+                                'successful writes is the standard at-least-once discipline.</p>'},
+ 't-stream-04': {'type': 'mcq',
+                 'topic': 'Batch & Live Streaming',
+                 'subtopic': 'stream_table_duality',
+                 'difficulty': 'Advanced',
+                 'tags': ['stream_table_duality', 'compaction', 'changelog', 'materialized_view'],
+                 'title': 'Streams, tables, and compacted topics',
+                 'question': '<p>A service maintains "current user profile" state. The team debates storing it as (a) a Kafka topic of '
+                             'profile-update events with standard time-based retention, vs (b) a log-compacted topic keyed by user_id. What does '
+                             'compaction change, and what concept underlies the whole discussion?</p>',
+                 'options': [{'key': 'A', 'text': 'Compaction deletes records older than retention.ms faster; the concept is TTL'},
+                             {'key': 'B',
+                              'text': 'Compaction retains at least the latest record per key indefinitely (discarding superseded updates), turning '
+                                      'the topic into a changelog from which current state is rebuildable — the stream-table duality: a table is a '
+                                      "compacted view of a change stream; a stream is a table's changelog"},
+                             {'key': 'C',
+                              'text': 'Compaction merges all partitions into one for global ordering; the concept is total order broadcast'},
+                             {'key': 'D', 'text': 'Compaction gzips old segments to save space; the concept is storage tiering'}],
+                 'correct_key': 'B',
+                 'option_explanations': {'A': "Wrong — that's just shorter time-based retention; compaction is value-based (superseded per key), not "
+                                              'age-based.',
+                                         'B': 'Correct — a compacted topic guarantees the newest value per key survives, so replaying it rebuilds '
+                                              "the full current table (deletes via null-value tombstones). That's the duality Kafka "
+                                              'Streams/ksqlDB/Flink build on: KTables from changelogs, changelogs from tables.',
+                                         'C': 'Wrong — compaction never touches partitioning or ordering scope.',
+                                         'D': 'Wrong — compaction is per-key latest-value retention, not compression (compression exists separately '
+                                              'and is orthogonal).'},
+                 'explanation': '<p><strong>Stream-table duality</strong>: a table is the fold (latest state per key) of a change stream; a change '
+                                "stream is the table's derivative. Log compaction is the storage feature that makes this practical — Kafka keeps at "
+                                'least the latest record per key forever (tombstones propagate deletes), so a compacted topic <em>is</em> a durable, '
+                                'replayable table: new consumers bootstrap current state by replaying it, stream processors back their state stores '
+                                'with it, and CDC pipelines are literally this pattern (database table → changelog → materialized replicas). '
+                                'Retention choice becomes semantic: time-retained topics answer "what happened"; compacted topics answer "what '
+                                'is".</p>'},
+ 't-stream-05': {'type': 'mcq',
+                 'topic': 'Batch & Live Streaming',
+                 'subtopic': 'flink_vs_spark_streaming',
+                 'difficulty': 'Advanced',
+                 'tags': ['flink', 'spark_structured_streaming', 'latency', 'state'],
+                 'title': 'Flink or Spark Structured Streaming?',
+                 'question': '<p>Two streaming workloads: (1) enrich and aggregate events into 1-minute dashboards, team already operates Spark for '
+                             'batch, latency budget ~1–2&nbsp;min; (2) per-entity fraud scoring with large keyed state (hundreds of GB), complex '
+                             "event-time logic (timers, custom windows), and a p99 budget of ~500&nbsp;ms. What's the defensible mapping and "
+                             'reasoning?</p>',
+                 'options': [{'key': 'A', 'text': 'Flink for both — it is strictly more capable, so standardizing on it is free'},
+                             {'key': 'B', 'text': "(1) Flink, (2) Spark — Spark's larger community handles fraud better"},
+                             {'key': 'C', 'text': "Spark for both — Structured Streaming's continuous mode makes it equivalent to Flink"},
+                             {'key': 'D',
+                              'text': '(1) Spark Structured Streaming — micro-batch latency fits the budget, and one engine/ops stack for '
+                                      'batch+streaming is a real economy; (2) Flink — event-at-a-time processing, first-class timers/state backends '
+                                      '(RocksDB) and mature event-time APIs are built for exactly this shape'}],
+                 'correct_key': 'D',
+                 'option_explanations': {'A': "Wrong — 'more capable' isn't free: a second engine's ops, expertise, and duplicated tooling are real "
+                                              "costs; workload (1) doesn't need what Flink adds.",
+                                         'B': "Wrong — inverted, and 'community size' is not a latency or state-management argument.",
+                                         'C': 'Wrong — continuous processing mode remains limited (map-like operations, no full aggregation support) '
+                                              "and rarely used in production; micro-batch Spark doesn't meet a 500ms p99 with complex state.",
+                                         'D': 'Correct — this is the standard decision: micro-batch semantics + shared Spark operations cover '
+                                              'minute-level aggregation cheaply; sub-second SLAs with heavy keyed state and fine-grained event-time '
+                                              "control are Flink's home turf."},
+                 'explanation': '<p>The honest comparison: <strong>Spark Structured Streaming</strong> — micro-batch (seconds-to-minutes latency), '
+                                'unified with batch Spark (code, ops, teams), solid state support; the pragmatic choice when budgets are minute-ish '
+                                'and Spark is already operated. <strong>Flink</strong> — true event-at-a-time streaming: millisecond-capable, timers '
+                                'and process functions, RocksDB state backends managing very large keyed state with incremental checkpoints, the '
+                                'most mature event-time machinery; the tool when latency is tight and state/time logic is the hard part. The senior '
+                                'framing is portfolio-level: pay for the second engine only where its differentiators are the requirement — which is '
+                                'exactly workload (2).</p>'},
+ 't-stream-06': {'type': 'short_answer',
+                 'topic': 'Batch & Live Streaming',
+                 'subtopic': 'topic_design',
+                 'difficulty': 'Advanced',
+                 'tags': ['kafka', 'partitioning', 'topic_design', 'retention'],
+                 'title': 'Design the Kafka topics for order processing',
+                 'question': '<p>Design Kafka topics for an e-commerce order platform: order lifecycle events (created/paid/shipped/cancelled) at '
+                             "~2k events/sec peak, consumed by (a) the fulfillment service (must see each order's events in sequence), (b) analytics "
+                             'landing to the lake, (c) a fraud service needing 30 days of replay. Decide: topic layout (one vs several), partition '
+                             'count and key, retention/compaction settings per consumer need, and what you monitor. Justify each choice and name the '
+                             'failure modes your design avoids.</p>',
+                 'rubric': {'1': "Arbitrary choices without justification ('one topic, 10 partitions') — no keying-to-ordering link, no retention "
+                                 'reasoning, no consumer-driven design.',
+                            '3': 'Single lifecycle topic keyed by order_id (per-order ordering for fulfillment — separate topics per status would '
+                                 'destroy cross-status ordering); partition count sized from throughput and consumer parallelism with headroom (e.g. '
+                                 '24-48); time-based retention ≥ 30 days for fraud replay; consumer lag monitoring.',
+                            '5': 'All of 3, plus: explicitly rejects topic-per-event-type *for lifecycle* events with the ordering argument (created '
+                                 'and paid for one order must not race in different topics), while allowing separate topics for genuinely '
+                                 'independent domains; notes partition count is hard to change once keyed (key remapping) so provision headroom up '
+                                 'front; hot-key awareness (single mega-order unlikely here, but bots/retries considered); schema/contract via '
+                                 'registry; retention economics (30d at 2k eps sized roughly, tiered storage as the long-retention option); '
+                                 'monitoring: per-partition lag, skew between partitions, rebalance frequency, under-replicated partitions.'},
+                 'follow_up_probes': ['Why does splitting created/paid into separate topics break the fulfillment service, exactly?',
+                                      'You need to go from 24 to 96 partitions later — what breaks and how do you migrate?',
+                                      "When would a compacted companion topic ('current order status') be worth maintaining alongside the event "
+                                      'log?'],
+                 'explanation': '<p>Core decisions and their reasons: <strong>one lifecycle topic</strong>, keyed by order_id — the ordering '
+                                "contract is per-partition, and only same-topic-same-key events serialize; per-event-type topics would let 'paid' "
+                                "overtake 'created' for the same order (the classic bug this design avoids). <strong>Partition count</strong>: sized "
+                                'from throughput ÷ per-consumer capacity with generous headroom, because keyed topics resist repartitioning (hash '
+                                'remap breaks key→partition history; migrations mean dual-write/re-key). <strong>Retention</strong>: time-based ≥ 30 '
+                                'days serves fraud replay (tiered storage where cost bites); analytics lands continuously so needs no special '
+                                'retention; a <em>compacted companion topic</em> materializing current-order-status is worth it when many consumers '
+                                'need state, not history. <strong>Monitoring</strong>: consumer lag per partition, partition skew, rebalance churn, '
+                                'ISR health. Every choice traces to a consumer requirement — that traceability is what the question grades.</p>'},
+ 't-stream-07': {'type': 'short_answer',
+                 'topic': 'Batch & Live Streaming',
+                 'subtopic': 'lambda_kappa',
+                 'difficulty': 'Advanced',
+                 'tags': ['lambda_architecture', 'kappa_architecture', 'reprocessing', 'unified_pipelines'],
+                 'title': 'Lambda vs Kappa, and what teams actually run',
+                 'question': '<p>Explain the Lambda architecture (batch + speed layers) and the Kappa architecture (stream-only with replay), the '
+                             "problem each was invented to solve, why maintaining Lambda's two codepaths hurts in practice, what Kappa demands from "
+                             'your log and processors, and what the pragmatic middle ground looks like in modern stacks (table formats + streaming '
+                             'ingestion). Which would you recommend for a typical analytics platform today, and why?</p>',
+                 'rubric': {'1': 'Defines neither architecture correctly, or recites definitions with no trade-off or recommendation.',
+                            '3': 'Lambda: parallel batch (accurate, complete, recomputable) + speed (fresh, approximate) layers merged at query time '
+                                 '— dual codepaths cause logic drift and double maintenance; Kappa: one streaming codepath, historical recomputation '
+                                 'by replaying the log — demands long log retention and replay-capable processors; recommends per-workload '
+                                 'pragmatism.',
+                            '5': 'All of 3, plus: names the merge complexity of Lambda (serving layer must stitch batch and speed views, and '
+                                 "discrepancies between them erode trust); Kappa's practical constraints (retention cost — mitigated by tiered "
+                                 'storage; replay throughput vs freshness during reprocessing; state rebuild time; reprocessing = spin up new job at '
+                                 'new version, backfill, atomically switch consumers); the modern synthesis — streaming ingestion into lakehouse '
+                                 'tables consumed by both fresh and batch queries (streaming-into-table, one logic in SQL/dbt or one engine), which '
+                                 'dissolves much of the dichotomy; recommendation framed by team ops capacity and actual freshness needs.'},
+                 'follow_up_probes': ['Walk through a Kappa-style reprocessing after a logic bug: exact steps, and where consumers switch over.',
+                                      'Why do batch and speed layers drift in real Lambda deployments even with discipline?',
+                                      'How do lakehouse table formats change this debate?'],
+                 'explanation': '<p><strong>Lambda</strong> answered an early-2010s constraint — streaming engines were approximate and fragile — by '
+                                'pairing a trustworthy batch layer with a fresh speed layer, merged at serve time. Its tax is structural: two '
+                                "codebases computing 'the same' logic drift (different bugs, different semantics), and the merge/serving layer is a "
+                                'chronic source of discrepancy. <strong>Kappa</strong> says: one streaming codepath; to reprocess, replay the '
+                                'retained log through a new job version and cut consumers over — which requires long-retention replayable logs '
+                                '(tiered storage helps), processors that rebuild state at replay speed, and disciplined cutover. The modern middle '
+                                'ground blunts the whole dichotomy: stream ingestion into lakehouse/warehouse tables (exactly-once-ish sinks), then '
+                                "let transformation logic live once (SQL/dbt or one engine's unified API) serving both fresh and historical reads. "
+                                'Recommendation for a typical analytics platform: that synthesis — full Kappa purism is warranted mainly when '
+                                'low-latency derived state is the product itself.</p>'},
+ 't-stream-08': {'type': 'short_answer',
+                 'topic': 'Batch & Live Streaming',
+                 'subtopic': 'streaming_incident',
+                 'difficulty': 'Advanced',
+                 'tags': ['consumer_lag', 'backpressure', 'incident_response', 'capacity'],
+                 'title': 'Incident: the stream is 4 hours behind',
+                 'question': '<p>Pager: the payments-events consumer group is 4 hours lagged and growing; producers are healthy; downstream fraud '
+                             'decisions are now operating on stale data. Walk through your incident response: immediate triage questions, likely '
+                             "root-cause categories with how you'd distinguish them, mitigation options (with what each sacrifices), and — after "
+                             'recovery — what you change so this class of incident pages you at 5 minutes of lag, not 4 hours.</p>',
+                 'rubric': {'1': "'Restart the consumers and add more of them' with no diagnosis path or awareness of what catching up requires.",
+                            '3': 'Triage: when did lag start growing (deploy? traffic spike? partition skew?), is it all partitions or some '
+                                 '(skew/hot key vs global throughput), consumer errors/restart loops (crash-looping poisons progress), processing '
+                                 'time per message trend; root causes: throughput deficit, poison-pill message, downstream dependency slowness, '
+                                 'rebalance storms; mitigations: scale consumers to partition cap, bypass/park poison messages (DLQ), degrade '
+                                 'enrichment calls; knows recovery needs processing rate > production rate.',
+                            '5': 'All of 3, plus: catch-up math (recovery time = backlog ÷ (consume rate − produce rate)) driving decisions; '
+                                 'explicit sacrifice framing — e.g. skip-ahead (jump offsets to now, backfill the gap later via batch) trades '
+                                 'completeness-now for freshness-now, defensible for fraud where stale decisions are worthless, if the gap is '
+                                 'reconciled; DLQ + poison-pill isolation as standing machinery; dependency degradation modes (cache/skip '
+                                 'enrichment) predefined; afterwards: lag SLOs with burn-rate alerts, autoscaling on lag, per-partition dashboards, '
+                                 'load tests establishing max sustainable throughput, and a documented skip-and-backfill runbook.'},
+                 'follow_up_probes': ['When is jumping offsets to latest the right call, and what must exist for it to be safe?',
+                                      "One partition lags, eleven don't — what are the two most likely causes and their fixes?",
+                                      'Why do rebalance storms masquerade as throughput problems, and how do you spot them?'],
+                 'explanation': '<p>Triage order: (1) shape of the lag — all partitions (global throughput deficit: deploy regression, downstream '
+                                'dependency slow, traffic growth) vs few partitions (hot key skew, or a poison-pill message crash-looping one '
+                                'consumer — check restart counts and error logs); (2) trend of per-message processing time; (3) rebalance frequency '
+                                '(churning membership pauses everyone and looks like slowness). Mitigations carry explicit sacrifices: scaling '
+                                'consumers helps only up to partition count; parking poison messages to a DLQ trades completeness for liveness; '
+                                'degrading enrichment (serve from cache, skip the call) trades decision quality for freshness; and the big lever — '
+                                '<strong>jump offsets to now and backfill the gap by batch later</strong> — is often exactly right for fraud (stale '
+                                'decisions are worthless) but only with a reconciliation path. Recovery arithmetic disciplines the conversation: '
+                                'backlog ÷ surplus throughput = hours to catch up. The permanent fixes: lag SLOs with early alerts, autoscaling on '
+                                'lag, per-partition observability, and rehearsed runbooks for skip-and-backfill.</p>'},
+ 't-test-01': {'type': 'mcq',
+               'topic': 'Data Testing',
+               'subtopic': 'test_taxonomy',
+               'difficulty': 'Intermediate',
+               'tags': ['unit_test', 'data_test', 'integration_test', 'taxonomy'],
+               'title': 'Which kind of test is missing?',
+               'question': '<p>A pipeline has: pytest unit tests for its transformation functions (fixed inputs → expected outputs), and a staging '
+                           'environment where the full DAG runs nightly against sampled production data. Last week a source system started sending '
+                           'order amounts in cents instead of dollars; every test stayed green while dashboards showed 100× revenue. Which testing '
+                           'layer was missing?</p>',
+               'options': [{'key': 'A', 'text': "Integration tests — the DAG's components weren't tested together"},
+                           {'key': 'B', 'text': "Load tests — the pipeline wasn't tested at production volume"},
+                           {'key': 'C',
+                            'text': 'Data quality tests on live data — assertions on the *data itself* (ranges, distributions, volumes) that run in '
+                                    'production against each batch, catching valid-code/invalid-data failures'},
+                           {'key': 'D', 'text': 'More unit tests — the transformation functions were under-tested'}],
+               'correct_key': 'C',
+               'option_explanations': {'A': 'Wrong — components interacted correctly; the DAG did what it was built to do with the data it received.',
+                                       'B': "Wrong — volume wasn't the issue; the pipeline processed the wrong values efficiently.",
+                                       'C': 'Correct — this failure class (code fine, data wrong) is exactly what in-production data tests exist '
+                                            'for: an accepted-range or distribution check on order_amount would have flagged the 100× shift on the '
+                                            'first batch.',
+                                       'D': 'Wrong — the code was correct for its specification; no fixed-input unit test detects that *reality* '
+                                            'changed units.'},
+               'explanation': '<p>The three-layer taxonomy interviews expect: <strong>unit tests</strong> — transformation logic on fixed fixtures '
+                              '(fast, in CI, catch code bugs); <strong>integration/pipeline tests</strong> — components composed, run against '
+                              'realistic environments (catch wiring, schema, dependency bugs); <strong>data quality tests</strong> — assertions '
+                              'executed against live data every run (nulls, uniqueness, referential integrity, accepted ranges, volume and '
+                              'distribution expectations) — because in data engineering, <em>correct code processing corrupted inputs is the '
+                              'dominant failure mode</em>, and only this layer sees it. The unit-vs-data distinction (test the code vs test the '
+                              'data) is the crux of this question and of most data-testing interviews.</p>'},
+ 't-test-02': {'type': 'mcq',
+               'topic': 'Data Testing',
+               'subtopic': 'quality_dimensions',
+               'difficulty': 'Intermediate',
+               'tags': ['quality_dimensions', 'completeness', 'freshness', 'consistency'],
+               'title': 'Name the failing quality dimension',
+               'question': "<p>Four incidents: (1) 30% of yesterday's events never arrived; (2) customer ages of −5 and 940 appear; (3) the orders "
+                           "table says a customer spent $1,200 while the invoices table says $900 for the same period; (4) the dashboard's 'latest "
+                           "data' is from 3 days ago. Which mapping to data-quality dimensions is right?</p>",
+               'options': [{'key': 'A', 'text': '(1) accuracy, (2) completeness, (3) timeliness, (4) uniqueness'},
+                           {'key': 'B', 'text': '(1) completeness, (2) validity/accuracy, (3) consistency, (4) freshness/timeliness'},
+                           {'key': 'C', 'text': '(1) consistency, (2) freshness, (3) validity, (4) completeness'},
+                           {'key': 'D', 'text': '(1) freshness, (2) uniqueness, (3) completeness, (4) validity'}],
+               'correct_key': 'B',
+               'option_explanations': {'A': 'Wrong — (4) involves no duplicates; (3) is not about arrival time.',
+                                       'B': 'Correct — missing expected records = completeness; values outside plausible domain = validity (accuracy '
+                                            'when checked against truth); two systems disagreeing on the same fact = consistency; stale data = '
+                                            'freshness/timeliness.',
+                                       'C': 'Wrong — each incident is shifted one dimension off; e.g. cross-system disagreement is the definition of '
+                                            'inconsistency, not validity.',
+                                       'D': 'Wrong — (1) is about missing data, not its age; (2) has no duplicates in sight; the rest misalign '
+                                            'similarly.'},
+               'explanation': '<p>The standard dimensions and their canonical checks: <strong>completeness</strong> (did everything expected arrive '
+                              '— volume vs baseline, required-field null rates); <strong>validity</strong> (values within defined domains — ranges, '
+                              'formats, enums) and <strong>accuracy</strong> (agreement with real-world truth — harder, needs a reference); '
+                              '<strong>consistency</strong> (agreement across systems/tables — reconciliation checks); '
+                              '<strong>freshness/timeliness</strong> (data recency vs SLA); <strong>uniqueness</strong> (no unintended duplicates). '
+                              'The practical value of the vocabulary: each dimension implies its own detection method and its own owner conversation '
+                              "— 'the data is bad' becomes an actionable, routable statement.</p>"},
+ 't-test-03': {'type': 'mcq',
+               'topic': 'Data Testing',
+               'subtopic': 'great_expectations',
+               'difficulty': 'Intermediate',
+               'tags': ['great_expectations', 'expectations', 'declarative_validation'],
+               'title': 'What Great Expectations-style validation adds',
+               'question': '<p>A team hand-writes SQL checks (SELECT COUNT(*) WHERE amount < 0 ...) scattered across DAG tasks. What does adopting a '
+                           'declarative expectation framework (Great Expectations / Soda-style) fundamentally add over the scripts?</p>',
+               'options': [{'key': 'A',
+                            'text': 'A managed suite of declarative, versionable expectations with standardized execution, rich result '
+                                    'artifacts/data docs, profiling to bootstrap suites, and reusable checkpoint integration — turning scattered '
+                                    'scripts into an owned, reviewable quality contract'},
+                           {'key': 'B', 'text': 'Machine-learning anomaly detection that replaces the need to define checks'},
+                           {'key': 'C', 'text': 'Automatic correction of failing rows before they load'},
+                           {'key': 'D', 'text': "Nothing — it's the same checks with extra dependencies"}],
+               'correct_key': 'A',
+               'option_explanations': {'A': "Correct — declarative expectations ('column X between 0 and 10000', 'row count within 3σ of baseline') "
+                                            'as versioned artifacts, run at checkpoints, producing structured results and human-readable docs; '
+                                            'profiling generates candidate suites from existing data.',
+                                       'B': 'Wrong — expectation frameworks are primarily declarative-assertion engines; anomaly detection exists in '
+                                            "the ecosystem but doesn't replace defined contracts.",
+                                       'C': 'Wrong — validation frameworks detect and report/block; they do not mutate data (quarantine/repair is '
+                                            "your pipeline's decision).",
+                                       'D': "Wrong at the system level — individual checks are expressible in SQL, but the framework's value is the "
+                                            '*management* of hundreds of them: consistency, review, reporting, reuse.'},
+               'explanation': '<p>The step-change is organizational, not computational: expectations become <strong>declared, versioned '
+                              'contracts</strong> ("this column is never null; this row count sits within seasonal bounds") that run identically '
+                              "everywhere, emit structured results (for alerting and trend dashboards) and human-readable data docs (for the 'is "
+                              "this table trustworthy?' conversation), and can be bootstrapped by profiling existing data. Scattered SQL checks rot "
+                              'silently; a managed suite is reviewable in PRs, measurable over time, and shareable across pipelines. The follow-up '
+                              'worth pre-empting: what happens on failure — warn vs block vs quarantine — is a policy decision the framework '
+                              'surfaces but you must design.</p>'},
+ 't-test-04': {'type': 'mcq',
+               'topic': 'Data Testing',
+               'subtopic': 'contract_testing',
+               'difficulty': 'Advanced',
+               'tags': ['data_contracts', 'producer_consumer', 'shift_left'],
+               'title': 'What a data contract actually changes',
+               'question': '<p>After the third incident of a product team\'s schema change breaking analytics, the data team proposes "data '
+                           'contracts." Beyond writing schemas down, what is the operative change that makes contracts effective?</p>',
+               'options': [{'key': 'A', 'text': 'Consumers writing more defensive SQL to tolerate any upstream change'},
+                           {'key': 'B', 'text': 'The data team gaining veto rights over all product deployments'},
+                           {'key': 'C', 'text': "A wiki page documenting each table's columns, updated quarterly"},
+                           {'key': 'D',
+                            'text': "Machine-enforced agreements at the producer boundary — schema + semantics + SLAs validated in the producer's "
+                                    "CI/CD and at publish time, so violating changes fail the producer's deploy instead of the consumer's dashboard "
+                                    '— plus an ownership/notification protocol for intentional evolution'}],
+               'correct_key': 'D',
+               'option_explanations': {'A': "Wrong — defensive consumption hides breakage as silent quality degradation; it's the opposite of a "
+                                            'contract (it removes the error signal entirely).',
+                                       'B': "Wrong — a human veto bottlenecks every team and doesn't scale; contracts automate the check instead of "
+                                            'centralizing the authority.',
+                                       'C': 'Wrong — documentation without enforcement is a suggestion; it drifts and breaks exactly like the '
+                                            'undocumented version, just with better post-incident reading.',
+                                       'D': "Correct — the essence is *shifting enforcement left* to the producer's pipeline: contract checks in "
+                                            'their CI (schema compatibility, semantic constraints, SLA declarations) make breakage a producer build '
+                                            'failure, and the evolution protocol makes intentional change a negotiation rather than a surprise.'},
+               'explanation': '<p>A data contract = <strong>schema + semantics + SLA + ownership, enforced by machinery at the producer '
+                              "boundary</strong>: compatibility checks in the producer's CI/CD (against a registry), publish-time validation, "
+                              'declared freshness/volume SLAs monitored automatically, and a defined process for intentional evolution (versioning, '
+                              'deprecation windows, consumer notification). The philosophical shift is accountability: data quality failures become '
+                              "<em>producer</em> defects caught in <em>producer</em> pipelines — 'shift left' applied to data. What contracts don't "
+                              'do: freeze schemas (they define how change happens safely) or replace downstream quality checks (upstream contracts + '
+                              'downstream validation are complementary layers).</p>'},
+ 't-test-05': {'type': 'short_answer',
+               'topic': 'Data Testing',
+               'subtopic': 'testing_strategy',
+               'difficulty': 'Advanced',
+               'tags': ['testing_pyramid', 'ci_cd', 'quality_gates', 'strategy'],
+               'title': 'A testing strategy for a 300-model warehouse',
+               'question': '<p>Design the full testing strategy for a dbt-based warehouse (300 models, 6 engineers, daily+hourly runs, exec-facing '
+                           'marts): what runs (a) on every PR, (b) on every production run, (c) periodically; which failures block vs warn; how you '
+                           'keep test runtime and alert noise sustainable as the project grows; and how you decide what *not* to test.</p>',
+               'rubric': {'1': "'Add dbt tests everywhere and run them in CI' — no layering, no blocking policy, no noise/runtime management, no "
+                               'prioritization.',
+                          '3': 'PR: compile + selective build/tests on modified models and children (slim CI) against sample/dev data; prod: schema '
+                               'tests (unique/not_null/relationships/accepted_values) inline with builds, failures block downstream of critical '
+                               'models; periodic: reconciliation against sources, anomaly checks on volumes; severity split (error vs warn) by '
+                               'consumer criticality; mentions test runtime via selective execution.',
+                          '5': 'All of 3, plus: unit tests for genuinely complex transformation logic (dbt unit tests / fixture-based) distinct from '
+                               'data tests; tiered blocking policy tied to lineage (block marts feeding execs, warn on exploratory models) with '
+                               'store_failures for debugging; noise management — alert budgets, ownership routing, auto-created tickets vs channel '
+                               'spam, periodic pruning of always-green/never-actionable tests; explicit non-testing criteria (low-stakes exploratory '
+                               'models, duplicative assertions upstream already guarantees, checks whose failure has no defined action); '
+                               'freshness/volume anomaly detection as the silent-failure net; treats the test suite itself as a maintained artifact '
+                               'with cost.'},
+               'follow_up_probes': ['A test fails at 3am on a model feeding the exec mart — walk through exactly what happens in your design.',
+                                    'How do you prevent 4,000 accumulated tests from making every run 40 minutes longer?',
+                                    "What's your criterion for deleting a test?"],
+               'explanation': '<p>The strategy is a pyramid with policies, not a pile of assertions. <strong>PR-time</strong>: compile + slim CI '
+                              '(state:modified+, deferred parents) with schema and unit tests on changed lineage — fast feedback, no prod data risk. '
+                              '<strong>Run-time</strong>: dbt build interleaves tests with materialization; blocking is <em>tiered by lineage</em> — '
+                              'failures upstream of exec marts halt propagation (stale-but-correct beats fresh-but-wrong), exploratory branches '
+                              'warn; store_failures preserves the offending rows for diagnosis. <strong>Periodic</strong>: source reconciliation '
+                              '(row counts/sums vs upstream), volume/distribution anomaly detection (the net for silent failures no one declared), '
+                              'and full-refresh parity checks for incremental models. Sustainability is a first-class requirement: selective '
+                              'execution, alert ownership and budgets (every alert has an owner and an action, or it gets deleted), and honest '
+                              'non-testing — untested-by-choice models are documented as such. The senior tell: treating the test suite as a product '
+                              'with maintenance cost, not a virtue accumulating indefinitely.</p>'},
+ 't-test-06': {'type': 'short_answer',
+               'topic': 'Data Testing',
+               'subtopic': 'anomaly_detection',
+               'difficulty': 'Advanced',
+               'tags': ['anomaly_detection', 'monitoring', 'seasonality', 'alert_fatigue'],
+               'title': 'Beyond rules: anomaly detection for data quality',
+               'question': "<p>Declarative checks catch what someone thought to declare. Describe how you'd add anomaly-based data quality "
+                           "monitoring to a warehouse: which metrics to track per table, how to model 'normal' when data has weekly seasonality and "
+                           "growth trends, how to tune sensitivity so on-call trusts the alerts, and two failure classes rules can't catch but "
+                           'anomaly detection can — plus one failure class anomaly detection will miss.</p>',
+               'rubric': {'1': "'Use ML to find anomalies' with no metric selection, baseline modeling, or alert-quality thinking.",
+                          '3': 'Metrics: row counts, null rates per column, distinct counts, distribution summaries (means/quantiles) per table per '
+                               'load; baseline: rolling windows with same-day-of-week comparison to absorb weekly seasonality; sensitivity via '
+                               'thresholds in standard deviations + minimum effect sizes; examples rules miss: upstream drops volume 40% (still '
+                               "nonzero), a category value's share collapses; example anomaly detection misses: a constant, systematic error present "
+                               'from the start.',
+                          '5': 'All of 3, plus: seasonal decomposition or STL-style baselines (trend + weekly component + residual bands) rather '
+                               'than naive rolling means; per-metric sensitivity tiers and alert budgets, warm-up periods for new tables, '
+                               "suppression during known events (backfills, launches); routing anomalies as 'investigate' signals distinct from "
+                               "contract-violation 'block' signals; misses articulated precisely — slow drift within bands, plausible-but-wrong "
+                               'values, errors older than the baseline window (the baseline learns the bug as normal); positions anomaly detection '
+                               'as complement to declared expectations and contracts, not replacement.'},
+               'follow_up_probes': ['Black Friday triples volume — how does your system not page everyone?',
+                                    'Why should an anomaly alert be triaged differently from a failed not_null test?',
+                                    "A bug has existed since before your monitoring launched — why won't the detector find it, and what would?"],
+               'explanation': '<p>The design: track per-table, per-load <strong>metadata metrics</strong> — row counts, per-column null rates, '
+                              "distinct cardinalities, numeric distribution summaries, freshness — and model each metric's normal band with "
+                              'seasonality-aware baselines (same-weekday comparisons or trend+seasonal decomposition; residuals define the alert '
+                              'bands). Sensitivity engineering is what makes it survive contact with on-call: minimum effect sizes on top of '
+                              'statistical thresholds, warm-up for new tables, planned-event suppression, per-table criticality tiers, and a '
+                              'standing rule that anomaly signals route as <em>investigate</em> (with context: which metric, how far outside band, '
+                              "since when) rather than block. It catches what rules can't: unforeseen shifts — volume sags, category-mix collapses, "
+                              'null-rate creep after an upstream deploy. It structurally misses: errors constant since before baseline (learned as '
+                              'normal), slow drift within bands, and plausible-but-wrong values — which is exactly why the complete system is '
+                              'contracts (producer boundary) + declared expectations (known invariants) + anomaly detection (unknown unknowns).</p>'}}
